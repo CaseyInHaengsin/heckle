@@ -217,7 +217,7 @@ mod tests {
     fn hints_drop_from_the_right_but_the_first_stays() {
         let app = App::default();
         let at = |cols| Chrome { app: &app, name: "a.md", cols, rows: 24, img_col: 0, palette: dark() };
-        assert_eq!(keys(&at(80)), vec![Key::Char('?'), Key::Char('/'), Key::Char('e')]);
+        assert_eq!(keys(&at(80)), vec![Key::Char('?'), Key::Char('/'), Key::Char('e'), Key::Char('-'), Key::Char('+')]);
         assert_eq!(keys(&at(40)), vec![Key::Char('?'), Key::Char('/')]);
         assert_eq!(keys(&at(20)), vec![Key::Char('?')]);
     }

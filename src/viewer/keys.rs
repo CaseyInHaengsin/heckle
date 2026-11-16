@@ -37,6 +37,7 @@ Review (heckle review FILE)
   F then a, r or c        finish: approve, request changes, or comment
 
 Other
+  + -                     zoom the page in, out (the terminal's own font zoom works too)
   w                       wrap or unwrap long lines in code blocks
   e or v                  open the file in $EDITOR (default vi), then reload it
   c                       copy the file's Markdown source to the clipboard

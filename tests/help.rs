@@ -461,7 +461,8 @@ fn hints_work_while_help_shows() {
     let Viewer { mut child, mut tty, out } = open(GFM, 100, &[]);
     wait_for(&out, 0, b"a=p,");
     let click = |tty: &mut std::fs::File, col: u16| tty.write_all(format!("\x1b[<0;{col};40M\x1b[<0;{col};40m").as_bytes()).unwrap();
-    click(&mut tty, 64);
+    // The ? hint: the bottom row's hints end at the percent, and the - and + zoom hints sit last.
+    click(&mut tty, 52);
     wait_for(&out, 0, b"mddog keys");
     std::thread::sleep(Duration::from_millis(300));
     let before = out.lock().unwrap().len();

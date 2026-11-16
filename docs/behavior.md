@@ -103,6 +103,12 @@ Images in the page:
 | I1 | a remote image arrives | The page lays out again with the image and keeps its position by content. For 60 s after a load the viewer checks for images often and holds back prefetch. An image that arrives later still shows. A fetch that fails leaves the alt text in place until a reload | `images_after_the_late_limit_still_arrive` (in `src/viewer/preview.rs`), `a_failed_remote_image_keeps_its_alt_text` (in `tests/engine.rs`) |
 | I2 | an SVG with a huge size | An SVG draws at most 16384 px a side and 2^25 pixels, counted after rounding to whole pixels. A bigger one is scaled down to fit, keeping its shape. A Mermaid diagram that would be bigger shows its source as a code block. An image SVG that still won't draw shows its alt text | `a_huge_draw_fits_the_limits` (in `src/render/svg.rs`), `a_huge_svg_draws_scaled_down` and `an_svg_whose_rounded_size_is_too_big_still_draws` (in `tests/engine.rs`) |
 
+Page zoom (a change in this fork):
+
+| # | Key or event | Behavior | Test |
+|---|---|---|---|
+| Z1 | `+` or `=`, `-`, or a click on `+` or `-` in the bottom row | Zooms the page in or out a step (50% to 300%, the steps a browser uses), keeping the reading position. The terminal's font and the status row don't change. The notice shows the new zoom | `z01_plus_and_minus_zoom` |
+
 Review mode (`heckle review FILE`, a change in this fork):
 
 | # | Key or event | Behavior | Test |

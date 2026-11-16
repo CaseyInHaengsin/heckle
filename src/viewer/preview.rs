@@ -35,6 +35,9 @@ const GLIDE_FRAME: Duration = Duration::from_millis(8);
 const FOLD_IDLE: Duration = Duration::from_secs(1);
 /// The X11 name for the arrow, sent with OSC 22 off text, links and buttons.
 const DEFAULT_POINTER: &str = "left_ptr";
+/// The page zoom steps that + and - move through, as a browser's.
+const ZOOMS: [f64; 13] = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
 /// The page's left margin in CSS px, where a click on a block's + starts a review comment.
 const GUTTER: f64 = crate::render::layout::PAD as f64;
 const SUPPORTED: &str = "Ghostty, iTerm2, Kitty, WezTerm, or Rex";
@@ -206,6 +209,8 @@ pub struct Preview {
     last_jump: Option<Instant>,
     /// The review open on this file (`heckle review`).
     review: Option<Session>,
+    /// The page zoom from + and -, on top of the terminal's font zoom: an index into `ZOOMS`.
+    zoom: usize,
 }
 
 pub fn run(file: PathBuf, stdin: bool) -> i32 {
@@ -388,6 +393,7 @@ fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>, review: Option<Sessi
         restore_at: None,
         land_on: None,
         review,
+        zoom: ZOOMS.iter().position(|&z| z == 1.0).unwrap_or(0),
     };
     p.app.review = p.review.is_some();
     let mut leftover = leftover;
@@ -744,6 +750,19 @@ impl Preview {
                 false
             }
             Action::Help => true,
+            Action::Zoom(dir) => {
+                let next = if dir > 0 { (self.zoom + 1).min(ZOOMS.len() - 1) } else { self.zoom.saturating_sub(1) };
+                if next == self.zoom {
+                    self.notify(if dir > 0 { "Zoomed in as far as it goes" } else { "Zoomed out as far as it goes" });
+                    return false;
+                }
+                self.zoom = next;
+                if !self.resize_in_place() {
+                    self.rerender_keep();
+                }
+                self.notify(&format!("Zoom {:.0}%", ZOOMS[self.zoom] * 100.0));
+                false
+            }
             Action::CommentHere => self.comment_here(None),
             Action::CommentOverall => {
                 let text = self.review.as_ref().map(|r| r.review.overall.clone()).unwrap_or_default();
@@ -1422,7 +1441,7 @@ impl Preview {
         }
         (self.cell_w, self.cell_h) = self.probe.cell_px(self.size, self.display);
         let base = self.probe.cell_px(self.start, self.display).1;
-        self.scale = page_scale(self.display, self.cell_h, base);
+        self.scale = page_scale(self.display, self.cell_h, base) * ZOOMS[self.zoom];
         if trace::enabled() {
             let s = self.size;
             trace::mark(&format!("size {}x{} cells, {}x{} px, cell {}x{} px, probe cell {:?}, scale {}", s.cols, s.rows, s.xpix, s.ypix, self.cell_w, self.cell_h, self.probe.cell, self.scale));

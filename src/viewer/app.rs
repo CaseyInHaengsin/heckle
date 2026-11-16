@@ -179,6 +179,8 @@ pub enum Action {
     Draft,
     /// Review mode: finish the review with this verdict.
     Finish(Verdict),
+    /// Zoom the page in (1) or out (-1) a step, without changing the terminal's font.
+    Zoom(i8),
 }
 
 /// A comment being written, shown over the page.
@@ -582,6 +584,8 @@ impl App {
                 self.finishing = true;
                 vec![Action::Status]
             }
+            Key::Char('+' | '=') => vec![Action::Zoom(1)],
+            Key::Char('-') => vec![Action::Zoom(-1)],
             Key::Char('e' | 'v') => vec![Action::Editor],
             Key::Char('c') => vec![Action::Copy],
             Key::Ctrl('z') => vec![Action::Suspend],
@@ -885,6 +889,8 @@ impl App {
             h.push(("t", "toc", Key::Char('t')));
         }
         h.push(("e", "edit", Key::Char('e')));
+        h.push(("-", "", Key::Char('-')));
+        h.push(("+", "zoom", Key::Char('+')));
         h
     }
 }
@@ -1537,6 +1543,17 @@ mod tests {
     }
 
     #[test]
+    fn z01_plus_and_minus_zoom() {
+        let mut a = app(100, 20);
+        assert_eq!(a.handle(Key::Char('+')), vec![Action::Zoom(1)]);
+        assert_eq!(a.handle(Key::Char('=')), vec![Action::Zoom(1)]);
+        assert_eq!(a.handle(Key::Char('-')), vec![Action::Zoom(-1)]);
+        assert_eq!(a.scroll, 0);
+        let hints = a.hints();
+        assert!(hints.iter().any(|h| h.2 == Key::Char('+')) && hints.iter().any(|h| h.2 == Key::Char('-')));
+    }
+
+    #[test]
     fn e00_edit_key() {
         let mut a = app(100, 20);
         assert_eq!(a.handle(Key::Char('e')), vec![Action::Editor]);
@@ -1759,9 +1776,9 @@ mod tests {
     fn h01_hints_follow_context() {
         let mut a = app(100, 20);
         let keys_of = |a: &App| a.hints().iter().map(|h| h.0).collect::<Vec<_>>();
-        assert_eq!(keys_of(&a), ["?", "/", "e"]);
+        assert_eq!(keys_of(&a), ["?", "/", "e", "-", "+"]);
         a.set_headings(&[h(1, "A", 0)]);
-        assert_eq!(keys_of(&a), ["?", "/", "t", "e"]);
+        assert_eq!(keys_of(&a), ["?", "/", "t", "e", "-", "+"]);
         a.handle(Key::Char('/'));
         assert_eq!(keys_of(&a), ["Enter", "Esc"]);
         a.handle(Key::Char('x'));
