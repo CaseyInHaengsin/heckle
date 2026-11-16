@@ -133,8 +133,11 @@ struct Place {
 
 pub struct Preview {
     watcher: Option<notify::RecommendedWatcher>,
-    /// Review mode: watches Claude's replies file.
+    /// Review mode: watches Claude's replies file, and what Claude is doing.
     replies_watcher: Option<notify::RecommendedWatcher>,
+    claude_watcher: Option<notify::RecommendedWatcher>,
+    /// When the viewer last read what Claude is doing: a `heckle wait` that died leaves no event.
+    claude_checked: Instant,
     loader: Option<Loader>,
     tty: Tty,
     engine: Engine,
@@ -343,6 +346,8 @@ fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>, review: Option<Sessi
     let mut p = Preview {
         watcher: None,
         replies_watcher: None,
+        claude_watcher: None,
+        claude_checked: Instant::now(),
         loader,
         tty,
         engine,
@@ -479,6 +484,11 @@ impl Preview {
                 let _ = tx.send(Event::RepliesChanged);
             });
             let _ = self.tx.send(Event::RepliesChanged);
+            let tx = self.tx.clone();
+            self.claude_watcher = watch::spawn(&r.store.claude_path(), move || {
+                let _ = tx.send(Event::ClaudeChanged);
+            });
+            let _ = self.tx.send(Event::ClaudeChanged);
         }
     }
 
@@ -579,6 +589,10 @@ impl Preview {
                 again
             }
             Event::FileChanged if !self.opened => false,
+            Event::ClaudeChanged => {
+                self.read_claude();
+                false
+            }
             Event::RepliesChanged => {
                 let Some(r) = self.review.as_mut() else { return false };
                 match r.merge_replies(&self.src) {
@@ -812,7 +826,10 @@ impl Preview {
                 let saved = r.finish(&self.src, v);
                 self.engine.set_threads(r.threads(), true);
                 match saved {
-                    Ok(()) => self.notify_with(&format!("Review saved ({}). Tell Claude to pick it up", v.outcome()), OnClick::Hints, Duration::from_secs(10)),
+                    Ok(()) => {
+                        let next = if self.app.claude.is_some() { "Claude will pick it up" } else { "Tell Claude to pick it up" };
+                        self.notify_with(&format!("Review saved ({}). {next}", v.outcome()), OnClick::Hints, Duration::from_secs(10));
+                    }
                     Err(e) => self.notify(&format!("Can't save the review: {e}")),
                 }
                 self.relayout();
@@ -1123,6 +1140,16 @@ impl Preview {
             };
             Composer { after, label: d.title.clone(), text: d.ed.text.clone(), cursor: d.ed.cursor, placeholder: placeholder.into(), save: save.into(), in_thread, focus }
         });
+        if let Some(r) = &self.review {
+            let typing = r.store.typing_path();
+            if self.app.draft.is_some() {
+                if !typing.exists() {
+                    let _ = std::fs::write(&typing, b"");
+                }
+            } else {
+                let _ = std::fs::remove_file(&typing);
+            }
+        }
         self.engine.set_composer(c);
         self.relayout();
         let Some(b) = self.layout.composer else { return false };
@@ -1818,7 +1845,29 @@ impl Preview {
         }
     }
 
+    /// Shows what Claude is doing with the review, from `heckle wait`'s file: listening while its
+    /// process lives, replying for up to 15 minutes after it took the review.
+    fn read_claude(&mut self) {
+        self.claude_checked = Instant::now();
+        let Some(r) = &self.review else { return };
+        let text = std::fs::read_to_string(r.store.claude_path()).unwrap_or_default();
+        let mut words = text.split_whitespace();
+        let state = match (words.next(), words.next().and_then(|n| n.parse::<u64>().ok())) {
+            // SAFETY: kill with signal 0 only asks whether the process exists; it sends nothing.
+            (Some("listening"), Some(pid)) if i32::try_from(pid).is_ok_and(|p| unsafe { libc::kill(p, 0) } == 0) => Some("Claude is listening"),
+            (Some("replying"), Some(at)) if crate::review::store::now().saturating_sub(at) < 900 => Some("Claude is replying…"),
+            _ => None,
+        };
+        if state != self.app.claude {
+            self.app.claude = state;
+            self.draw_chrome();
+        }
+    }
+
     fn tick(&mut self) {
+        if self.review.is_some() && self.claude_checked.elapsed() >= Duration::from_secs(2) {
+            self.read_claude();
+        }
         if let Some((g, last)) = self.glide {
             if self.app.help || self.listing {
                 self.glide = None;
@@ -2045,6 +2094,9 @@ impl Preview {
     }
 
     fn shutdown(&mut self) {
+        if let Some(r) = &self.review {
+            let _ = std::fs::remove_file(r.store.typing_path());
+        }
         self.loader = None;
         let mut out = String::new();
         self.cache.free_all(&mut out);

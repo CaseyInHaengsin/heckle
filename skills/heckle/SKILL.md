@@ -6,7 +6,7 @@ description: Open a Markdown file (a plan, spec, notes, README) for review in a 
 # heckle
 
 Run `heckle guide` and follow it. It covers opening the review in a pane beside you (never in
-your own shell), reading it when the user is done, replying inline with `heckle reply`, and
-editing the file while the pane follows.
+your own shell), listening for the user's comments with `heckle wait` in the background,
+replying inline with `heckle reply`, and editing the file while the pane follows.
 
 The guide is built into the `heckle` binary, so it always matches the installed version.

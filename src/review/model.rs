@@ -211,6 +211,20 @@ impl Review {
         self.comments.iter().flat_map(|c| &c.msgs).chain(&self.overall_msgs).filter(|m| m.author == Author::Claude).count()
     }
 
+    /// The conversations whose newest message is the user's, so Claude owes a reply: comment
+    /// ids, with 0 for the overall review. Resolved ones are settled.
+    pub fn pending(&self) -> Vec<u32> {
+        let mut out: Vec<u32> = self.comments.iter().filter(|c| !c.resolved && c.msgs.last().is_some_and(|m| m.author == Author::You)).map(|c| c.id).collect();
+        let overall = match self.overall_msgs.last() {
+            Some(m) => m.author == Author::You,
+            None => !self.overall.trim().is_empty(),
+        };
+        if overall {
+            out.push(0);
+        }
+        out
+    }
+
     pub fn next_comment_id(&self) -> u32 {
         self.comments.iter().map(|c| c.id).max().unwrap_or(0) + 1
     }

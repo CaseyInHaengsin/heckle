@@ -7,6 +7,7 @@ pub mod editor;
 pub mod model;
 pub mod output;
 pub mod store;
+pub mod wait;
 
 /// `heckle guide`: how an AI agent should use heckle.
 pub const GUIDE: &str = include_str!("guide.md");
@@ -313,6 +314,22 @@ mod tests {
         assert!(!s.delete(SRC, 1, 0).unwrap());
         assert!(s.delete(SRC, 1, 0).unwrap());
         assert!(s.review.comments.is_empty());
+    }
+
+    #[test]
+    fn pending_lists_what_claude_owes_a_reply() {
+        let mut s = session("pending");
+        s.add(SRC, 3, 3, "Why?".into()).unwrap();
+        s.add(SRC, 1, 1, "Rename".into()).unwrap();
+        s.set_overall(SRC, "Mostly fine.".into()).unwrap();
+        assert_eq!(s.review.pending(), [1, 2, 0]);
+        reply_file(&s, r#"{"replies":[{"to":1,"body":"Because.","at_ms":99999999999999},{"to":null,"body":"Thanks","at_ms":99999999999999}]}"#);
+        s.merge_replies(SRC).unwrap();
+        s.toggle_resolved(SRC, 2).unwrap();
+        // #1 and the overall comment are answered, and #2 is resolved.
+        assert!(s.review.pending().is_empty());
+        s.reply(SRC, 1, "And?".into()).unwrap();
+        assert_eq!(s.review.pending(), [1]);
     }
 
     #[test]

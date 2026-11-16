@@ -19,6 +19,8 @@ pub enum Event {
     FileChanged,
     /// Review mode: Claude's replies file changed.
     RepliesChanged,
+    /// Review mode: `heckle wait` changed what Claude is doing.
+    ClaudeChanged,
     /// The file list has new entries.
     Listed,
     Quit,

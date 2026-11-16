@@ -1299,7 +1299,7 @@ fn guide_covers_every_review_command() {
     let out = Command::new(env!("CARGO_BIN_EXE_heckle")).arg("guide").env("MDDOG_CACHE_DIR", test_cache()).output().unwrap();
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success());
-    for cmd in ["heckle review", "heckle result", "heckle reply", "heckle open", "rex split"] {
+    for cmd in ["heckle review", "heckle result", "heckle reply", "heckle open", "wait \"$out\"", "run_in_background", "rex split"] {
         assert!(text.contains(cmd), "the guide never mentions {cmd}");
     }
 }
@@ -1367,4 +1367,39 @@ fn a_paste_into_the_comment_box_lays_it_out_once_per_batch() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(saved.contains("+ rule). the shared"), "{saved}");
     assert!(layouts < 30, "the comment box was laid out {layouts} times for one paste");
+}
+
+#[test]
+fn wait_returns_once_a_saved_comment_needs_claude() {
+    let dir = scratch("wait");
+    let file = dir.join("plan.md");
+    std::fs::write(&file, "# Plan\n\nStep one.\n").unwrap();
+    let review = dir.join("out/review.md");
+    let state = dir.join("state");
+    let env = [("XDG_STATE_HOME", state.to_str().unwrap())];
+    let args = ["review", "--out", review.to_str().unwrap(), file.to_str().unwrap()];
+    let Viewer { mut child, mut tty, out } = start(&args, None, 80, &env, false);
+    wait_for(&out, 0, b"a=p,");
+    let mut wait = Command::new(env!("CARGO_BIN_EXE_heckle")).args(["wait", review.to_str().unwrap(), "--quiet", "0.5"]).envs(env).stdout(Stdio::piped()).spawn().unwrap();
+    wait_for(&out, 0, b"Claude is listening");
+    tty.write_all(b"a").unwrap();
+    wait_for(&out, 0, b"Ctrl-S");
+    // Nothing is waiting yet, and an open comment box holds it back.
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(wait.try_wait().unwrap().is_none(), "wait returned with nothing to answer");
+    tty.write_all(b"Why?\x13").unwrap();
+    let returned = exits_within(&mut wait, LIMIT);
+    let said = {
+        let mut s = String::new();
+        let _ = wait.stdout.take().unwrap().read_to_string(&mut s);
+        s
+    };
+    let replying = wait_for(&out, 0, "Claude is replying".as_bytes()) > 0;
+    tty.write_all(b"q").unwrap();
+    let _ = exits_within(&mut child, LIMIT);
+    let _ = child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(returned, Some(true));
+    assert!(said.contains("waiting for you: #1"), "{said}");
+    assert!(replying);
 }

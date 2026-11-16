@@ -38,15 +38,39 @@ terminal. Opening a review never blocks you. Open the pane, tell the user, and c
      yourself. Ask the user to run `heckle review --out "$out" FILE.md` in a Kitty-graphics
      terminal (Rex, Ghostty, kitty, WezTerm, iTerm2).
 
-4. Tell the user in one line, e.g. "Opened the review beside us. Tell me when you want me to
-   pick it up." **Don't wait for or poll the review.** Nothing in heckle answers on its own:
-   you answer when the user asks you to.
+4. Start listening (step 2), and tell the user in one line, e.g. "Opened the review beside us.
+   I'll answer your comments as you leave them." Then carry on with the conversation.
 
-## 2. Pick it up
+`ID` below is the review id, or the `$out` path itself: every command takes either.
 
-When the user says they're done (or asks you to look):
+## 2. Listen in the background
 
-1. Read it: `cat "$out"`, or `heckle result` for the newest review (`heckle result --list`,
+Run this with your shell tool's background option (in Claude Code, `run_in_background`), so
+you're woken when it exits and don't block the conversation:
+
+```sh
+"$heckle_bin" wait "$out"
+```
+
+It exits when the user has left comments or replies you haven't answered and has paused for a
+few seconds (it also waits while they have a comment box open, so several comments come as one
+batch). It prints what's waiting, then you pick it up (step 3) and reply (step 4). While it runs,
+the user sees "Claude is listening" in heckle's status row, and "Claude is replying…" once it
+exits.
+
+After you reply, **run `heckle wait` in the background again**. Stop when it says the review is
+finished or closed (read it once more and act on it), or when it says nothing came for an hour
+(start it again only if the user is still reviewing). Never poll in a loop yourself; never run
+`heckle wait` in the foreground.
+
+If the user asks you to stop listening, stop the background task. When the user says "pick up
+my review" without a running `wait`, go straight to step 3.
+
+## 3. Pick it up
+
+When `heckle wait` exits, or the user says they're done (or asks you to look):
+
+1. Read it: `heckle result ID`, or `heckle result` for the newest review (`heckle result --list`,
    `heckle result <id>`, `--json` for the structured form).
 2. The `Status:` line says where it stands:
    - `finished`: the title has the verdict (approved / changes requested / comments).
@@ -59,12 +83,13 @@ When the user says they're done (or asks you to look):
    `Claude replied:` (you; replies from any agent show as "Claude").
    - Answer the newest message in each conversation: edit the file, or answer the question.
    - `(resolved)`: settled. Skip it unless the user's last message asks for something.
-   - Only conversations whose newest message is the user's need you. The rest you already
-     answered.
+   - Only conversations whose newest message is the user's need you (`heckle wait` names
+     them). The rest you already answered. Reply to every one of them, even if only to say
+     you agree, or `heckle wait` comes straight back for it.
    - `(outdated)`: the lines it was on changed since. It quotes them as they were. Check that
      your change covers it, and say so in your reply.
 
-## 3. Reply inline, and edit the file
+## 4. Reply inline, and edit the file
 
 Answer each conversation where the user will see it, under their comment:
 
@@ -74,17 +99,18 @@ heckle reply <id> --overall "Thanks! Addressed everything except #4, see my repl
 ```
 
 `--to N` is the comment's number in the review file. Keep replies short: what you changed and
-where, or the answer. An open pane shows them within a second. Also give the user a short
-summary in the conversation.
+where, or the answer. An open pane shows them within a second. Keep your message in the
+conversation to a line or two: the replies are where the user reads your answers. Then go back
+to step 2.
 
 Edit the Markdown file itself to make the changes. The open pane reloads it and keeps each
 conversation on its lines; conversations on lines you changed become outdated. There is no
 refresh step.
 
-## 4. Open it again
+## 5. Open it again
 
-If the pane was closed, `heckle open <id>` (in a new pane, as in step 1) shows the review again
-with its conversations.
+If the pane was closed, `heckle open ID` (in a new pane, as in step 1) shows the review again
+with its conversations. Start listening again (step 2).
 
 ## Keys (in case the user asks)
 

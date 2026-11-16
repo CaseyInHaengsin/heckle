@@ -29,7 +29,7 @@ pub fn state_dir() -> PathBuf {
     home.join(".local/state/heckle")
 }
 
-fn now() -> u64 {
+pub fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
@@ -61,14 +61,35 @@ impl Store {
         Ok(Self { id, json: md.with_extension("json"), md })
     }
 
-    /// Opens an existing review by id (or id suffix); the newest when `want` is None.
+    /// Opens an existing review by id (or id suffix), or by the path of its review.md; the
+    /// newest when `want` is None.
     pub fn find(want: Option<&str>) -> Result<Self, String> {
         let all: Vec<_> = index().into_iter().filter(|(_, p)| p.exists()).collect();
+        if let Some(w) = want.filter(|w| w.ends_with(".md") && Path::new(w).is_file()) {
+            let md = std::path::absolute(w).unwrap_or_else(|_| PathBuf::from(w));
+            let id = all
+                .iter()
+                .rev()
+                .find(|(_, p)| *p == md)
+                .map_or_else(|| md.parent().and_then(Path::file_name).map_or_else(|| "review".into(), |n| n.to_string_lossy().into_owned()), |(i, _)| i.clone());
+            return Ok(Self { id, json: md.with_extension("json"), md });
+        }
         let (id, md) = match want {
             Some(w) => all.iter().rev().find(|(i, _)| i == w || i.ends_with(w)).ok_or_else(|| format!("no review with id {w}"))?,
             None => all.last().ok_or("no reviews yet")?,
         };
         Ok(Self { id: id.clone(), json: md.with_extension("json"), md: md.clone() })
+    }
+
+    /// What Claude is doing with the review, written by `heckle wait` and shown by the viewer:
+    /// `listening PID` while it waits, `replying SECS` once it took the review to answer it.
+    pub fn claude_path(&self) -> PathBuf {
+        self.md.with_extension("claude")
+    }
+
+    /// There while the viewer has a comment box open, so `heckle wait` lets the user finish.
+    pub fn typing_path(&self) -> PathBuf {
+        self.md.with_extension("typing")
     }
 
     /// Claude's replies, written by `heckle reply` and read by the viewer.
@@ -93,7 +114,7 @@ impl Store {
     }
 }
 
-fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
+pub fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
     let tmp = path.with_extension(format!("{}.tmp", path.extension().and_then(|e| e.to_str()).unwrap_or("")));
     std::fs::write(&tmp, data).map_err(io(&tmp))?;
     std::fs::rename(&tmp, path).map_err(io(path))

@@ -256,6 +256,9 @@ pub struct App {
     pub draft: Option<Draft>,
     /// F was pressed: the next key picks the verdict.
     pub finishing: bool,
+    /// What Claude is doing with the review (`heckle wait`): "Claude is listening" or "Claude is
+    /// replying…".
+    pub claude: Option<&'static str>,
 }
 
 impl App {
@@ -878,6 +881,9 @@ impl App {
             return format!(" /{d} ");
         }
         let mut s = format!(" {name} ");
+        if let Some(c) = self.claude {
+            s.push_str(&format!("· {c} "));
+        }
         if self.missing {
             s.push_str("(file gone, showing the last version) ");
         }

@@ -23,6 +23,7 @@ Review
   heckle result [ID]        print a review (the newest by default); --list, --json, --path
   heckle reply [ID] --to N T  add Claude's reply T to comment N (or --overall)
   heckle open [ID]          show a review again (the newest by default)
+  heckle wait [ID]          wait until the review has comments Claude hasn't answered
   heckle guide              how an AI agent should use heckle (the whole workflow)
 
 Options
@@ -38,6 +39,7 @@ fn main() {
     match std::env::args().nth(1).as_deref() {
         Some("result") => done(review::store::result_cmd(&rest)),
         Some("reply") => done(review::store::reply_cmd(&rest)),
+        Some("wait") => done(review::wait::wait_cmd(&rest)),
         Some("review") => std::process::exit(review_cmd(&rest)),
         Some("open") => std::process::exit(open_cmd(&rest)),
         Some("guide") => {
