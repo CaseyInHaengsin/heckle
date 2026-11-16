@@ -5,7 +5,8 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = "usage: mdd [file.md|folder]
-       command | mdd";
+       command | mdd
+       mdd review [--out PATH] file.md";
 
 const HELP: &str = "Preview Markdown in your terminal the way a browser renders it.
 
@@ -14,6 +15,12 @@ Usage
   mdd file.md               preview a Markdown file
   mdd folder                list Markdown files in a folder to preview
   command | mdd             preview the output of a command in Markdown format
+
+Review
+  mdd review file.md        preview a file and comment on it (saves a review file)
+    --out PATH              where to save the review (default ~/.local/state/mddog/reviews/)
+  mdd result [ID]           print a review (the newest by default); --list, --json, --path
+  mdd reply [ID] --to N T   add Claude's reply T to comment N (or --overall)
 
 Options
   -h, --help                show this help
@@ -24,6 +31,13 @@ In the preview, press ? to list the keys.
 
 fn main() {
     trace::start();
+    let rest: Vec<String> = std::env::args().skip(2).collect();
+    match std::env::args().nth(1).as_deref() {
+        Some("result") => done(review::store::result_cmd(&rest)),
+        Some("reply") => done(review::store::reply_cmd(&rest)),
+        Some("review") => std::process::exit(review_cmd(&rest)),
+        _ => {}
+    }
     let mut files: Vec<String> = Vec::new();
     let mut options = true;
     let mut headless: Option<u16> = None;
@@ -95,6 +109,44 @@ fn main() {
         preview::run(PathBuf::from(file), false)
     };
     std::process::exit(code);
+}
+
+fn done(r: Result<(), String>) -> ! {
+    if let Err(e) = r {
+        eprintln!("mdd: {e}");
+        std::process::exit(1);
+    }
+    std::process::exit(0);
+}
+
+/// `mdd review [--out PATH] FILE`
+fn review_cmd(args: &[String]) -> i32 {
+    let mut out: Option<PathBuf> = None;
+    let mut file: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--out" => match args.get(i + 1) {
+                Some(p) => {
+                    out = Some(PathBuf::from(p));
+                    i += 1;
+                }
+                None => usage("--out needs a path"),
+            },
+            a if a.starts_with('-') => usage(&format!("unknown option {a}")),
+            a if file.is_none() => file = Some(a),
+            _ => usage("review takes one file"),
+        }
+        i += 1;
+    }
+    let Some(file) = file else { usage("review needs a file") };
+    config::load().unwrap_or_else(|e| fail(&format!("config: {e}")));
+    check_file(Path::new(file)).unwrap_or_else(|e| fail(&e));
+    if let Some(why) = preview::refusal() {
+        eprintln!("{}", fit(&why));
+        std::process::exit(1);
+    }
+    review::open(Path::new(file), out.as_deref(), || preview::run(PathBuf::from(file), false)).unwrap_or_else(|e| fail(&e))
 }
 
 fn stdin_is_tty() -> bool {
