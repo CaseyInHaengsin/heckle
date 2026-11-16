@@ -22,6 +22,8 @@ Review
     --out PATH              where to save the review (default ~/.local/state/heckle/reviews/)
   heckle result [ID]        print a review (the newest by default); --list, --json, --path
   heckle reply [ID] --to N T  add Claude's reply T to comment N (or --overall)
+  heckle open [ID]          show a review again (the newest by default)
+  heckle guide              how an AI agent should use heckle (the whole workflow)
 
 Options
   -h, --help                show this help
@@ -37,6 +39,11 @@ fn main() {
         Some("result") => done(review::store::result_cmd(&rest)),
         Some("reply") => done(review::store::reply_cmd(&rest)),
         Some("review") => std::process::exit(review_cmd(&rest)),
+        Some("open") => std::process::exit(open_cmd(&rest)),
+        Some("guide") => {
+            print!("{}", review::GUIDE);
+            std::process::exit(0);
+        }
         _ => {}
     }
     let mut files: Vec<String> = Vec::new();
@@ -148,6 +155,20 @@ fn review_cmd(args: &[String]) -> i32 {
         std::process::exit(1);
     }
     review::open(Path::new(file), out.as_deref(), |session| preview::run_review(PathBuf::from(file), session)).unwrap_or_else(|e| fail(&e))
+}
+
+/// `heckle open [ID]`: shows a review again, with its conversations.
+fn open_cmd(args: &[String]) -> i32 {
+    let id = match args {
+        [] => None,
+        [a] if !a.starts_with('-') => Some(a.as_str()),
+        _ => usage("open takes one review id"),
+    };
+    let store = review::store::Store::find(id).unwrap_or_else(|e| fail(&e));
+    let saved = std::fs::read_to_string(&store.json).unwrap_or_else(|e| fail(&format!("{}: {e}", store.json.display())));
+    let source = serde_json::from_str::<serde_json::Value>(&saved).ok().and_then(|v| v["source"].as_str().map(String::from)).unwrap_or_else(|| fail("the review doesn't say which file it's on"));
+    let args = ["--out".to_string(), store.md.display().to_string(), source];
+    review_cmd(&args)
 }
 
 fn stdin_is_tty() -> bool {

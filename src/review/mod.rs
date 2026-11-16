@@ -8,6 +8,9 @@ pub mod model;
 pub mod output;
 pub mod store;
 
+/// `heckle guide`: how an AI agent should use heckle.
+pub const GUIDE: &str = include_str!("guide.md");
+
 use std::path::Path;
 
 use crate::render::layout::{Thread, ThreadMsg};

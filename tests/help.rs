@@ -1293,3 +1293,45 @@ fn claudes_reply_shows_in_the_open_review() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(saved.contains("Claude replied:\n> Because."), "{saved}");
 }
+
+#[test]
+fn guide_covers_every_review_command() {
+    let out = Command::new(env!("CARGO_BIN_EXE_heckle")).arg("guide").env("MDDOG_CACHE_DIR", test_cache()).output().unwrap();
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    for cmd in ["heckle review", "heckle result", "heckle reply", "heckle open", "rex split"] {
+        assert!(text.contains(cmd), "the guide never mentions {cmd}");
+    }
+}
+
+#[test]
+fn open_shows_a_closed_review_again() {
+    let dir = scratch("open");
+    let file = dir.join("plan.md");
+    std::fs::write(&file, "# Plan\n\nStep one.\n").unwrap();
+    let review = dir.join("out/review.md");
+    let state = dir.join("state");
+    let env = [("XDG_STATE_HOME", state.to_str().unwrap())];
+    let args = ["review", "--out", review.to_str().unwrap(), file.to_str().unwrap()];
+    let Viewer { mut child, mut tty, out } = start(&args, None, 80, &env, false);
+    wait_for(&out, 0, b"a=p,");
+    tty.write_all(b"a").unwrap();
+    wait_for(&out, 0, b"Ctrl-S");
+    tty.write_all(b"Keep me\x13").unwrap();
+    let end = Instant::now() + LIMIT;
+    while !std::fs::read_to_string(&review).unwrap_or_default().contains("Keep me") && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    tty.write_all(b"q").unwrap();
+    let _ = exits_within(&mut child, LIMIT);
+    let _ = child.kill();
+    let Viewer { mut child, mut tty, out } = start(&["open"], None, 80, &env, false);
+    wait_for(&out, 0, b"a=p,");
+    let reopened = std::fs::read_to_string(&review).unwrap_or_default();
+    tty.write_all(b"q").unwrap();
+    let quit = exits_within(&mut child, LIMIT);
+    let _ = child.kill();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(quit, Some(true));
+    assert!(reopened.starts_with("# Review: in progress") && reopened.contains("> Keep me"), "{reopened}");
+}
