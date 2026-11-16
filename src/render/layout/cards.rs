@@ -115,6 +115,12 @@ impl Layouter<'_> {
     /// One line of UI text with its top at `y`, cut to end before `max_x`. Returns its width.
     #[expect(clippy::too_many_arguments, reason = "the text, its font, color and place, each a plain value")]
     fn label(&mut self, s: &str, size: f32, bits: u16, color: Rgb, x: f32, y: f32, max_x: f32) -> f32 {
+        self.text_at(s, size, bits, color, (x, y, max_x), false)
+    }
+
+    /// `label`, as page text that selection, copy and search see (`selectable`), or as a control's
+    /// caption that they skip.
+    fn text_at(&mut self, s: &str, size: f32, bits: u16, color: Rgb, (x, y, max_x): (f32, f32, f32), selectable: bool) -> f32 {
         let f = FontKey::new(size * self.s, bits);
         let mut text = s.to_string();
         while !text.is_empty() && x + self.fonts.measure(f, &text) > max_x {
@@ -130,7 +136,8 @@ impl Layouter<'_> {
         let (asc, desc) = self.fonts.ascent_descent(f);
         let w = self.fonts.measure(f, &text);
         if !text.is_empty() {
-            self.push(x, y, w, asc + desc, Kind::Text { s: text, f, color, under: false, strike: false, asc, tx: NO_TEXT });
+            let tx = if selectable { self.note_text(&text) } else { NO_TEXT };
+            self.push(x, y, w, asc + desc, Kind::Text { s: text, f, color, under: false, strike: false, asc, tx });
         }
         w
     }
@@ -178,21 +185,31 @@ impl Layouter<'_> {
         out
     }
 
-    /// Draws wrapped body text from `y`; returns the lines' byte ranges.
+    /// Draws wrapped body text from `y` as page text: lines that wrap join with a space, and
+    /// the text's own line breaks stay. Returns the lines' byte ranges.
     fn body(&mut self, text: &str, x: f32, y: f32, width: f32, color: Rgb) -> Vec<(usize, usize)> {
         let s = self.s;
         let lines = self.wrap(text, width);
         let f = FontKey::new(BODY * s, 0);
         let (asc, desc) = self.fonts.ascent_descent(f);
         for (k, &(a, b)) in lines.iter().enumerate() {
+            if k > 0 {
+                if text[lines[k - 1].1..a].contains('\n') {
+                    self.nl();
+                } else {
+                    self.pend_space = true;
+                }
+            }
             let t = text[a..b].trim_end();
             if t.is_empty() {
                 continue;
             }
             let w = self.fonts.measure(f, t);
             let ly = y + k as f32 * LINE * s + (LINE * s - asc - desc) / 2.0;
-            self.push(x, ly, w, asc + desc, Kind::Text { s: t.to_string(), f, color, under: false, strike: false, asc, tx: NO_TEXT });
+            let tx = self.note_text(t);
+            self.push(x, ly, w, asc + desc, Kind::Text { s: t.to_string(), f, color, under: false, strike: false, asc, tx });
         }
+        self.nl();
         lines
     }
 
@@ -253,7 +270,8 @@ impl Layouter<'_> {
             hx += self.label("Resolved", SMALL, SEMIBOLD, th_text, hx, ty, end) + 8.0 * s;
         }
         let head = if folded { format!("{} · {}", t.head, t.msgs.first().map_or("", |m| m.body.lines().next().unwrap_or(""))) } else { t.head.clone() };
-        self.label(&head, SMALL, 0, th_muted, hx, ty, end);
+        self.text_at(&head, SMALL, 0, th_muted, (hx, ty, end), true);
+        self.nl();
         *y = top + head_h;
         if !folded {
             for (j, m) in t.msgs.iter().enumerate() {
@@ -269,8 +287,10 @@ impl Layouter<'_> {
                     name_end = self.links(&[(CardAction::Delete(id, j), delete, ink.red()), (CardAction::Edit(id, j), "Edit", th_link)], x + w - CPAD * s, ny) - 12.0 * s;
                 }
                 let nx = x + (CPAD + 20.0) * s;
-                let nw = self.label(&m.name, SMALL, SEMIBOLD, th_text, nx, ny, name_end);
-                self.label(&m.verb, SMALL, 0, th_muted, nx + nw + 6.0 * s, ny, name_end);
+                let nw = self.text_at(&m.name, SMALL, SEMIBOLD, th_text, (nx, ny, name_end), true);
+                self.pend_space = true;
+                self.text_at(&m.verb, SMALL, 0, th_muted, (nx + nw + 6.0 * s, ny, name_end), true);
+                self.nl();
                 let bx = x + CPAD * s;
                 let bw = w - 2.0 * CPAD * s;
                 let n = if m.body.trim().is_empty() {

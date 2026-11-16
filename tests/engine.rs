@@ -307,3 +307,20 @@ fn review_threads_sit_under_their_block_and_push_the_rest_down() {
         std::fs::write(std::path::Path::new(&dir).join("threads.png"), png).unwrap_or_else(|_| unreachable!());
     }
 }
+
+#[test]
+fn a_drag_over_a_review_card_selects_the_card_text() {
+    use mddog::render::layout::{Thread, ThreadMsg};
+    let e = engine("# Plan\n\nStep one.\n\nStep two.\n");
+    let msg = ThreadMsg { name: "Claude".into(), claude: true, verb: "replied".into(), body: "Renamed it to Overview.".into(), mine: false, confirm_delete: false };
+    e.set_threads(vec![Thread { id: 1, after: Some(1), head: "Conversation on line 1".into(), outdated: false, resolved: false, folded: false, resolvable: true, msgs: vec![msg] }], true);
+    let l = e.layout();
+    let (_, top, _) = l.threads[0];
+    // From the card's top edge to the end of the reply's line: the card's text, not the heading
+    // above it or the paragraph below.
+    let reply = e.search("Overview", None)[0][0];
+    e.select(Select::Range(0.0, top + 1.0, 5000.0, reply[1] + reply[3] / 2.0));
+    let text = e.selection_text();
+    assert!(text.contains("Renamed it to Overview."), "{text:?}");
+    assert!(!text.contains("Plan") && !text.contains("Step"), "{text:?}");
+}
