@@ -1,13 +1,17 @@
 [package]
-name = "mddog"
+name = "heckle"
 version = "1.0.2"
 edition = "2024"
-description = "Render Markdown in the terminal as a browser shows them, styled like GitHub by default"
+description = "Read Markdown in the terminal as a browser shows it, and heckle it: review comments that go back to Claude. A fork of mddog"
 license = "MIT"
 publish = false
 
+[lib]
+name = "mddog"
+path = "src/lib.rs"
+
 [[bin]]
-name = "mdd"
+name = "heckle"
 path = "src/main.rs"
 
 [dependencies]

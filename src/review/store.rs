@@ -1,11 +1,11 @@
-//! Where reviews are saved, and `mdd result` / `mdd reply` for reading and answering them.
+//! Where reviews are saved, and `heckle result` / `heckle reply` for reading and answering them.
 //!
 //! Each review writes `review.md` and `review.json` (to `--out`, or to
-//! `~/.local/state/mddog/reviews/<id>/`). `~/.local/state/mddog/index.tsv` lists every review
-//! (id, path) so `mdd result` can find the newest one even when Claude lost the path. A fixed
+//! `~/.local/state/heckle/reviews/<id>/`). `~/.local/state/heckle/index.tsv` lists every review
+//! (id, path) so `heckle result` can find the newest one even when Claude lost the path. A fixed
 //! home-relative folder is used instead of `$TMPDIR` because the review pane and Claude's shell
 //! can see different temp folders. Claude's replies go to a separate `review.replies.json`, so
-//! the viewer and `mdd reply` never write the same file.
+//! the viewer and `heckle reply` never write the same file.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::review::model::{ClaudeReply, Review, now_ms};
 use crate::review::output;
 
+#[derive(Clone)]
 pub struct Store {
     pub id: String,
     pub md: PathBuf,
@@ -22,10 +23,10 @@ pub struct Store {
 
 pub fn state_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("XDG_STATE_HOME").filter(|d| !d.is_empty()) {
-        return PathBuf::from(d).join("mddog");
+        return PathBuf::from(d).join("heckle");
     }
     let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("."), PathBuf::from);
-    home.join(".local/state/mddog")
+    home.join(".local/state/heckle")
 }
 
 fn now() -> u64 {
@@ -70,7 +71,7 @@ impl Store {
         Ok(Self { id: id.clone(), json: md.with_extension("json"), md: md.clone() })
     }
 
-    /// Claude's replies, written by `mdd reply` and read by the viewer.
+    /// Claude's replies, written by `heckle reply` and read by the viewer.
     pub fn replies_path(&self) -> PathBuf {
         self.md.with_extension("replies.json")
     }
@@ -110,11 +111,11 @@ fn index() -> Vec<(String, PathBuf)> {
     text.lines().filter_map(|l| l.split_once('\t')).map(|(id, p)| (id.to_string(), PathBuf::from(p))).collect()
 }
 
-const REPLY_HELP: &str = "mdd reply [ID] --to N TEXT     reply to comment N (the number in the review file)
-mdd reply [ID] --overall TEXT  reply to the overall comment
+const REPLY_HELP: &str = "heckle reply [ID] --to N TEXT     reply to comment N (the number in the review file)
+heckle reply [ID] --overall TEXT  reply to the overall comment
 TEXT may also come on stdin. ID defaults to the newest review.";
 
-/// `mdd reply [ID] (--to N | --overall) [TEXT...]`: adds Claude's reply to a conversation. The
+/// `heckle reply [ID] (--to N | --overall) [TEXT...]`: adds Claude's reply to a conversation. The
 /// text comes from the arguments, or stdin when there are none. An open viewer shows it live.
 pub fn reply_cmd(args: &[String]) -> Result<(), String> {
     let mut id: Option<&str> = None;
@@ -174,7 +175,7 @@ pub fn reply_cmd(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// `mdd result [--list | --json | --path] [ID]`
+/// `heckle result [--list | --json | --path] [ID]`
 pub fn result_cmd(args: &[String]) -> Result<(), String> {
     let mut list = false;
     let mut as_json = false;
@@ -186,7 +187,7 @@ pub fn result_cmd(args: &[String]) -> Result<(), String> {
             "--json" => as_json = true,
             "--path" => path_only = true,
             "-h" | "--help" => {
-                println!("mdd result [ID] [--json | --path]   print a review (the newest by default)\nmdd result --list                   list recent reviews");
+                println!("heckle result [ID] [--json | --path]   print a review (the newest by default)\nheckle result --list                   list recent reviews");
                 return Ok(());
             }
             other if other.starts_with('-') => return Err(format!("unknown option {other}")),
@@ -208,7 +209,7 @@ pub fn result_cmd(args: &[String]) -> Result<(), String> {
     let file = if as_json { &s.json } else { &s.md };
     let text = std::fs::read_to_string(file).map_err(io(file))?;
     if !as_json {
-        println!("<!-- mdd review {}: {} -->", s.id, s.md.display());
+        println!("<!-- heckle review {}: {} -->", s.id, s.md.display());
     }
     print!("{text}");
     Ok(())

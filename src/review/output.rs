@@ -17,9 +17,9 @@ pub fn markdown(lines: &[&str], r: &Review) -> String {
     };
     let _ = writeln!(s, "# Review: {title}");
     let status = match r.progress {
-        Progress::InProgress => "in progress (mdd is still open; more comments may come)",
+        Progress::InProgress => "in progress (heckle is still open; more comments may come)",
         Progress::Finished => "finished",
-        Progress::Closed => "closed without finishing (mdd was closed before Finish)",
+        Progress::Closed => "closed without finishing (heckle was closed before Finish)",
     };
     let n = r.comment_count();
     let _ = writeln!(s, "Status: {status}.");

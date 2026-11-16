@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::render::doc::{self, Doc};
 use crate::render::images::Images;
-use crate::render::layout::{self, Opts, place_bar};
+use crate::render::layout::{self, Composer, Opts, Thread, place_bar};
 use crate::render::page::{BtnKind, HScroll, Kind, NO_TEXT, Page};
 use crate::render::raster::{self, Ctx, Expanded, Overlay};
 use crate::render::svg::render_view;
@@ -33,6 +33,18 @@ pub struct Layout {
     pub texts: Vec<String>,
     pub headings: Vec<(u8, String, f64)>,
     pub height: f64,
+    /// Review conversation cards: (id, top, height).
+    pub threads: Vec<(u32, f64, f64)>,
+    /// The review comment box: its top and height, and its Comment and Cancel buttons.
+    pub composer: Option<ComposerRects>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComposerRects {
+    pub top: f64,
+    pub height: f64,
+    pub save: Rect,
+    pub cancel: Rect,
 }
 
 /// What a click on the page did.
@@ -92,6 +104,9 @@ struct State {
     images: Images,
     wrap: bool,
     toggled: HashSet<usize>,
+    /// Review conversations, kept across loads: the viewer sets them for the file it shows.
+    threads: Vec<Thread>,
+    composer: Option<Composer>,
     /// Zoomed diagrams, by index.
     views: HashMap<usize, View>,
     /// The diagram a drag pans, and the pointer's last spot (device px).
@@ -136,6 +151,8 @@ impl Engine {
             images: Images::new(".".into()),
             wrap: false,
             toggled: HashSet::new(),
+            threads: Vec::new(),
+            composer: None,
             views: HashMap::new(),
             pan: None,
             page: Page::default(),
@@ -185,7 +202,14 @@ impl Engine {
 
     fn relayout(&self, st: &mut State) {
         let Some(doc) = st.doc.take() else { return };
-        let o = Opts { width: (self.width.get() * self.scale.get()) as f32, scale: self.scale.get() as f32, wrap_code: st.wrap, toggled: st.toggled.clone() };
+        let o = Opts {
+            width: (self.width.get() * self.scale.get()) as f32,
+            scale: self.scale.get() as f32,
+            wrap_code: st.wrap,
+            toggled: st.toggled.clone(),
+            threads: st.threads.clone(),
+            composer: st.composer.clone(),
+        };
         let before = st.page.diagrams.len();
         let State { fonts, th, images, .. } = st;
         fonts.set_scale(o.scale);
@@ -208,6 +232,7 @@ impl Engine {
         // Button and scroll-bar indices point into the old page.
         st.ov.hover_btn = None;
         st.ov.copied_btn = None;
+        st.ov.gutter = None;
         st.held = None;
         st.pan = None;
         // Views are kept by index, so a layout that adds or drops a diagram (a <details> toggle) drops them all.
@@ -425,6 +450,31 @@ impl Engine {
             texts: p.blocks.iter().map(|b| p.text_str(b.tx.0, b.tx.1.min(b.tx.0 + 200))).collect(),
             headings: p.heads.iter().map(|h| (h.level, h.text.clone(), f64::from(h.y) / s)).collect(),
             height: f64::from(p.h) / s,
+            threads: p.threads.iter().map(|t| (t.id, f64::from(t.top) / s, f64::from(t.h) / s)).collect(),
+            composer: p.composer.map(|c| ComposerRects { top: f64::from(c.top) / s, height: f64::from(c.h) / s, save: self.css(c.save), cancel: self.css(c.cancel) }),
+        }
+    }
+
+    /// Shows the review comment box, or takes it away, and lays the page out again.
+    pub fn set_composer(&self, composer: Option<Composer>) {
+        let mut st = self.st.borrow_mut();
+        if st.composer == composer {
+            return;
+        }
+        st.composer = composer;
+        self.relayout(&mut st);
+    }
+
+    /// Sets the review conversations. With `relayout`, lays the page out again now; otherwise
+    /// they show from the next `load`.
+    pub fn set_threads(&self, threads: Vec<Thread>, relayout: bool) {
+        let mut st = self.st.borrow_mut();
+        if st.threads == threads {
+            return;
+        }
+        st.threads = threads;
+        if relayout {
+            self.relayout(&mut st);
         }
     }
 
@@ -474,6 +524,19 @@ impl Engine {
         st.matches.clear();
         st.cur = None;
         self.overlay(&mut st);
+    }
+
+    /// Marks the block a review comment would go on, `(top, height)` in CSS px, or clears the
+    /// mark. Returns the boxes to draw again.
+    pub fn set_gutter(&self, block: Option<(f64, f64)>) -> Vec<Rect> {
+        let mut st = self.st.borrow_mut();
+        let new = block.map(|(t, h)| (self.px(t), self.px(h)));
+        let old = std::mem::replace(&mut st.ov.gutter, new);
+        if old == new {
+            return vec![];
+        }
+        let w = 24.0 * self.scale.get() as f32;
+        old.into_iter().chain(new).map(|(t, h)| self.css((0.0, t, w, h.max(16.0 * self.scale.get() as f32)))).collect()
     }
 
     pub fn hover(&self, x: f64, y: f64) -> (Pointer, Vec<Rect>) {

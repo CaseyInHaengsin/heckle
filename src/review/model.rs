@@ -98,7 +98,7 @@ impl Author {
 }
 
 /// One message in a conversation. `at` is milliseconds since the epoch, used to interleave the
-/// user's messages (saved by the viewer) with Claude's (written by `mdd reply`).
+/// user's messages (saved by the viewer) with Claude's (written by `heckle reply`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Msg {
     pub author: Author,
@@ -119,7 +119,7 @@ pub fn now_ms() -> u64 {
 /// A conversation on some lines: the user's comment, then replies.
 #[derive(Clone, Debug)]
 pub struct Comment {
-    /// Stable number shown in the review file, so Claude can reply to it (`mdd reply --to N`).
+    /// Stable number shown in the review file, so Claude can reply to it (`heckle reply --to N`).
     pub id: u32,
     pub target: Target,
     pub anchor: Anchor,

@@ -81,7 +81,7 @@ fn launch(file: &str, cols: u16, env: &[(&str, &str)], job: bool) -> Viewer {
 }
 
 fn start(args: &[&str], dir: Option<&std::path::Path>, cols: u16, env: &[(&str, &str)], job: bool) -> Viewer {
-    start_exe(env!("CARGO_BIN_EXE_mdd").as_ref(), args, dir, cols, (18, 38), env, job)
+    start_exe(env!("CARGO_BIN_EXE_heckle").as_ref(), args, dir, cols, (18, 38), env, job)
 }
 
 fn start_exe(exe: &std::path::Path, args: &[&str], dir: Option<&std::path::Path>, cols: u16, cell: (u16, u16), env: &[(&str, &str)], job: bool) -> Viewer {
@@ -231,7 +231,7 @@ fn tmux_zellij_and_warp_are_refused_before_any_escape() {
 #[test]
 fn piped_markdown_opens() {
     let shell = "printf '# Piped\\n' | \"$MDD\" -";
-    let Viewer { mut child, mut tty, out } = start_exe("/bin/sh".as_ref(), &["-c", shell], None, 80, (18, 38), &[("MDD", env!("CARGO_BIN_EXE_mdd"))], false);
+    let Viewer { mut child, mut tty, out } = start_exe("/bin/sh".as_ref(), &["-c", shell], None, 80, (18, 38), &[("MDD", env!("CARGO_BIN_EXE_heckle"))], false);
     wait_for(&out, 0, b"a=p,");
     tty.write_all(b"q").unwrap();
     let quit = exits_within(&mut child, LIMIT);
@@ -444,7 +444,7 @@ fn a_pane_without_pixels_at_launch_is_no_font_zoom() {
     let dir = scratch("unsized");
     let trace = dir.join("trace.log");
     let env = [("MDDOG_TRACE", trace.to_str().unwrap()), ("MDDOG_SCALE", "2"), ("XDG_CONFIG_HOME", dir.to_str().unwrap())];
-    let Viewer { mut child, tty, out } = start_replying(env!("CARGO_BIN_EXE_mdd").as_ref(), &[GFM], None, 80, (0, 0), probe_reply((8, 16)), &env, false);
+    let Viewer { mut child, tty, out } = start_replying(env!("CARGO_BIN_EXE_heckle").as_ref(), &[GFM], None, 80, (0, 0), probe_reply((8, 16)), &env, false);
     wait_for(&out, 0, b"a=p,");
     let sent = out.lock().unwrap().len();
     resize(&tty, libc::winsize { ws_row: 40, ws_col: 100, ws_xpixel: 100 * 18, ws_ypixel: 40 * 38 });
@@ -608,8 +608,8 @@ struct Appearance(std::path::PathBuf);
 impl Appearance {
     fn new(dir: &std::path::Path) -> Self {
         let exe = dir.join(format!("mddog-appearance-{}", std::process::id()));
-        if std::fs::hard_link(env!("CARGO_BIN_EXE_mdd"), &exe).is_err() {
-            std::fs::copy(env!("CARGO_BIN_EXE_mdd"), &exe).unwrap();
+        if std::fs::hard_link(env!("CARGO_BIN_EXE_heckle"), &exe).is_err() {
+            std::fs::copy(env!("CARGO_BIN_EXE_heckle"), &exe).unwrap();
         }
         Appearance(exe)
     }
@@ -656,7 +656,7 @@ fn help_follows_an_appearance_change() {
 
 #[test]
 fn help_flag_points_to_the_key_screen() {
-    let out = Command::new(env!("CARGO_BIN_EXE_mdd")).arg("--help").env("MDDOG_CACHE_DIR", test_cache()).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_heckle")).arg("--help").env("MDDOG_CACHE_DIR", test_cache()).output().unwrap();
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success());
     assert!(text.contains("press ? to list the keys"), "{text}");
@@ -745,7 +745,7 @@ fn a_pixel_click_in_the_list_follows_a_font_size_change() {
     let mut reply = probe_reply((18, 38));
     reply.splice(0..0, *b"\x1b[?1016;2$y");
     let trace = dir.join("trace.log");
-    let Viewer { mut child, tty, out } = start_replying(env!("CARGO_BIN_EXE_mdd").as_ref(), &[dir.to_str().unwrap()], None, 80, (18, 38), reply, &[("MDDOG_TRACE", trace.to_str().unwrap())], false);
+    let Viewer { mut child, tty, out } = start_replying(env!("CARGO_BIN_EXE_heckle").as_ref(), &[dir.to_str().unwrap()], None, 80, (18, 38), reply, &[("MDDOG_TRACE", trace.to_str().unwrap())], false);
     wait_for(&out, 0, b"\x1b[c");
     wait_for(&out, 0, b"Title 5");
     // A bigger font: the same 80 by 40 cells, 50 pixels tall.
@@ -860,7 +860,7 @@ fn tiles_line_up_at_an_odd_cell_height() {
     for h in [43, 42] {
         let dump = dir.join(format!("tiles-{h}"));
         std::fs::create_dir_all(&dump).unwrap();
-        let mut v = start_exe(env!("CARGO_BIN_EXE_mdd").as_ref(), &[md.to_str().unwrap()], None, 108, (22, h), &[("XDG_CONFIG_HOME", &cfg), ("MDDOG_DUMP_TILES", dump.to_str().unwrap())], false);
+        let mut v = start_exe(env!("CARGO_BIN_EXE_heckle").as_ref(), &[md.to_str().unwrap()], None, 108, (22, h), &[("XDG_CONFIG_HOME", &cfg), ("MDDOG_DUMP_TILES", dump.to_str().unwrap())], false);
         let end = Instant::now() + LIMIT;
         while stitched(&dump).len() < 3000 && Instant::now() < end {
             std::thread::sleep(Duration::from_millis(100));
@@ -1230,4 +1230,35 @@ fn a_relative_link_opens_the_file_at_its_heading_and_backspace_returns() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(landed.starts_with("\"Deep"), "b.md opened at {landed}, not at its heading");
     assert_eq!(quit, Some(true));
+}
+
+#[test]
+fn review_mode_saves_a_comment_and_closes_the_review() {
+    let dir = scratch("review");
+    let file = dir.join("plan.md");
+    std::fs::write(&file, "# Plan\n\nStep one.\n").unwrap();
+    let review = dir.join("out/review.md");
+    let state = dir.join("state");
+    let args = ["review", "--out", review.to_str().unwrap(), file.to_str().unwrap()];
+    let Viewer { mut child, mut tty, out } = start(&args, None, 80, &[("XDG_STATE_HOME", state.to_str().unwrap())], false);
+    wait_for(&out, 0, b"a=p,");
+    tty.write_all(b"a").unwrap();
+    // The status row offers the comment box's keys once it's open.
+    wait_for(&out, 0, b"Ctrl-S");
+    // q is text in the comment box, and Ctrl-s saves.
+    tty.write_all(b"q is fine\x13").unwrap();
+    let end = Instant::now() + LIMIT;
+    let mut saved = String::new();
+    while !saved.contains("q is fine") && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(50));
+        saved = std::fs::read_to_string(&review).unwrap_or_default();
+    }
+    tty.write_all(b"q").unwrap();
+    let quit = exits_within(&mut child, LIMIT);
+    let _ = child.kill();
+    let closed = std::fs::read_to_string(&review).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(saved.contains("**Comment 1 on line 1:**") && saved.contains("> q is fine"), "{saved}");
+    assert_eq!(quit, Some(true));
+    assert!(closed.starts_with("# Review: closed without finishing"), "{closed}");
 }

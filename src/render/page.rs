@@ -186,6 +186,26 @@ pub struct Page {
     pub toggles: Vec<(f32, f32, f32, f32, usize)>,
     /// Pending remote images: layout asks, the viewer fetches.
     pub wanted: Vec<String>,
+    /// Review conversation cards, in device px.
+    pub threads: Vec<ThreadBox>,
+    /// The review comment box, in device px.
+    pub composer: Option<ComposerBox>,
+}
+
+/// The review comment box and its buttons, `(x, y, w, h)`.
+#[derive(Clone, Copy, Debug)]
+pub struct ComposerBox {
+    pub top: f32,
+    pub h: f32,
+    pub save: (f32, f32, f32, f32),
+    pub cancel: (f32, f32, f32, f32),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ThreadBox {
+    pub id: u32,
+    pub top: f32,
+    pub h: f32,
 }
 
 impl Page {

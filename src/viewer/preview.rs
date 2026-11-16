@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use super::Event;
-use super::app::{self, Action, App, Heading, Notice, OnClick};
+use super::app::{self, Action, App, Draft, DraftOn, Heading, Notice, OnClick};
 use super::cache::{Batch, Cache, Pixels, View};
 use super::chrome::{self, Chrome};
 use super::clipboard;
@@ -14,6 +14,9 @@ use super::loading::Loader;
 use super::picker::{self, Pick, Picker};
 use super::position;
 use crate::render::engine::{Engine, Layout, Pointer, Press, Rect, Select};
+use crate::review::Session;
+use crate::review::editor::Editor;
+use crate::review::model::lines_label;
 use crate::term::kitty::{self, Shm};
 use crate::term::screen;
 use crate::term::{self, Click, Input, Key, Probe, Size, Tty};
@@ -32,14 +35,16 @@ const GLIDE_FRAME: Duration = Duration::from_millis(8);
 const FOLD_IDLE: Duration = Duration::from_secs(1);
 /// The X11 name for the arrow, sent with OSC 22 off text, links and buttons.
 const DEFAULT_POINTER: &str = "left_ptr";
+/// The page's left margin in CSS px, where a click on a block's + starts a review comment.
+const GUTTER: f64 = crate::render::layout::PAD as f64;
 const SUPPORTED: &str = "Ghostty, iTerm2, Kitty, WezTerm, or Rex";
 
 /// Why mddog won't run here, when the environment alone tells. Checked before anything goes to the terminal.
 pub fn refusal() -> Option<String> {
     Some(match term::refused_by_env(|k| std::env::var_os(k))? {
-        term::Refused::Tmux => "mdd: mddog doesn't support tmux yet because tmux doesn't pass its images through. Run mdd outside tmux.".to_string(),
-        term::Refused::Zellij => "mdd: mddog doesn't support zellij yet because zellij 0.45 garbles scrolled images (zellij-org/zellij#5573 and #5648). Run mdd outside zellij.".to_string(),
-        term::Refused::Warp => format!("mdd: mddog doesn't support Warp because Warp can't crop images, and mddog crops images to scroll them. Use {SUPPORTED}."),
+        term::Refused::Tmux => "heckle: heckle doesn't support tmux yet because tmux doesn't pass its images through. Run heckle outside tmux.".to_string(),
+        term::Refused::Zellij => "heckle: heckle doesn't support zellij yet because zellij 0.45 garbles scrolled images (zellij-org/zellij#5573 and #5648). Run heckle outside zellij.".to_string(),
+        term::Refused::Warp => format!("heckle: heckle doesn't support Warp because Warp can't crop images, and heckle crops images to scroll them. Use {SUPPORTED}."),
     })
 }
 /// The longest the input thread waits before it checks `paused` again.
@@ -199,10 +204,17 @@ pub struct Preview {
     path: Vec<usize>,
     /// When the last jump key came, for `app::REPEAT`.
     last_jump: Option<Instant>,
+    /// The review open on this file (`heckle review`).
+    review: Option<Session>,
 }
 
 pub fn run(file: PathBuf, stdin: bool) -> i32 {
-    start(file, stdin, None)
+    start(file, stdin, None, None)
+}
+
+/// Shows `file` for review: the comment keys are on, and comments go to `session`.
+pub fn run_review(file: PathBuf, session: Session) -> i32 {
+    start(file, false, None, Some(session))
 }
 
 /// Whether input typed during the first render asks to quit, in either key encoding.
@@ -212,10 +224,10 @@ fn quits(input: &[u8]) -> bool {
 
 /// Starts with the list of Markdown files under `root` instead of a file.
 pub fn browse(root: PathBuf) -> i32 {
-    start(PathBuf::new(), false, Some(root))
+    start(PathBuf::new(), false, Some(root), None)
 }
 
-fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>) -> i32 {
+fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>, review: Option<Session>) -> i32 {
     let (tx, rx) = mpsc::channel();
     let paused = Arc::new(AtomicBool::new(false));
     // Whether a Ctrl-C came while the screen was ours. Checked at delivery, not when the thread
@@ -267,12 +279,12 @@ fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>) -> i32 {
     let mut tty = match Tty::open() {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("mdd: needs a terminal to show the preview ({}). It can't write to a pipe or a file. Run it in a terminal window.", term::io_error(&e));
+            eprintln!("heckle: needs a terminal to show the preview ({}). It can't write to a pipe or a file. Run it in a terminal window.", term::io_error(&e));
             return 1;
         }
     };
     if let Err(e) = tty.raw() {
-        eprintln!("mdd: can't take keys from the terminal: {}", term::io_error(&e));
+        eprintln!("heckle: can't take keys from the terminal: {}", term::io_error(&e));
         return 1;
     }
     term::on_panic_restore(tty.saved());
@@ -301,7 +313,7 @@ fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>) -> i32 {
     trace::mark("terminal probed");
     engine.set_display_p3(probe.ghostty());
     if probe.no_graphics() {
-        let refusal = format!("mdd: this terminal can't show images so it can't show the preview. mddog needs the Kitty graphics protocol: use {SUPPORTED}.");
+        let refusal = format!("heckle: this terminal can't show images so it can't show the preview. heckle needs the Kitty graphics protocol: use {SUPPORTED}.");
         drop(loader);
         drop(picker);
         tty.write(term::leave().as_bytes());
@@ -375,7 +387,9 @@ fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>) -> i32 {
         history: Vec::new(),
         restore_at: None,
         land_on: None,
+        review,
     };
+    p.app.review = p.review.is_some();
     let mut leftover = leftover;
     if p.listing {
         p.show();
@@ -391,12 +405,12 @@ fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>) -> i32 {
             Ok(Ok(v)) => break v,
             Ok(Err(e)) => {
                 p.shutdown();
-                eprintln!("mdd: {}: {}", term::printable(&p.file.display().to_string()), term::io_error(&e));
+                eprintln!("heckle: {}: {}", term::printable(&p.file.display().to_string()), term::io_error(&e));
                 return 1;
             }
             Err(RecvTimeoutError::Disconnected) => {
                 p.shutdown();
-                eprintln!("mdd: can't render {}", term::printable(&p.file.display().to_string()));
+                eprintln!("heckle: can't render {}", term::printable(&p.file.display().to_string()));
                 return 1;
             }
             Err(RecvTimeoutError::Timeout) => {}
@@ -627,6 +641,9 @@ impl Preview {
                         self.hover_at = Some((spot, u32::MAX));
                     }
                     let on_hint = self.region(spot.cell) == Region::Status && self.chrome().hint_at(spot.cell.0).is_some();
+                    if self.app.draft.is_some() && click != Click::Move && !on_hint {
+                        return click == Click::Press && self.composer_click(spot);
+                    }
                     // A move is not a click, so it never closes help or the expanded diagram.
                     if click != Click::Move
                         && let Some(actions) = self.app.modal_click(click == Click::Press, on_hint)
@@ -727,6 +744,26 @@ impl Preview {
                 false
             }
             Action::Help => true,
+            Action::CommentHere => self.comment_here(None),
+            Action::CommentOverall => {
+                let text = self.review.as_ref().map(|r| r.review.overall.clone()).unwrap_or_default();
+                self.app.draft = Some(Draft { on: DraftOn::Overall, title: "Overall review comment".into(), quote: vec![], ed: Editor::new(&text) });
+                self.show_composer(true)
+            }
+            Action::Draft => self.show_composer(false),
+            Action::CloseDraft => self.show_composer(false),
+            Action::SaveDraft => self.save_draft(),
+            Action::Finish(v) => {
+                let Some(r) = self.review.as_mut() else { return false };
+                let saved = r.finish(&self.src, v);
+                self.engine.set_threads(r.threads(), true);
+                match saved {
+                    Ok(()) => self.notify_with(&format!("Review saved ({}). Tell Claude to pick it up", v.outcome()), OnClick::Hints, Duration::from_secs(10)),
+                    Err(e) => self.notify(&format!("Can't save the review: {e}")),
+                }
+                self.relayout();
+                false
+            }
             Action::Collapse => {
                 let rects = self.engine.collapse();
                 self.redraw(&rects)
@@ -754,6 +791,10 @@ impl Preview {
             }
             Action::Editor => {
                 self.edit();
+                false
+            }
+            Action::Browse if self.review.is_some() => {
+                self.notify("A review stays on one file");
                 false
             }
             Action::Browse => {
@@ -925,6 +966,9 @@ impl Preview {
                 if let Some(link) = link {
                     return self.open_link(link) | cleared;
                 }
+                if self.review.is_some() && x < GUTTER && self.block_at(y).is_some() {
+                    return self.comment_here(Some(y)) | cleared;
+                }
                 self.press(x, y) | cleared
             }
         }
@@ -959,7 +1003,11 @@ impl Preview {
         }
         self.hover_page = page;
         let (x, y) = if page { self.grid().point(spot, 0.5) } else { (-1.0, -1.0) };
-        let (pointer, rects) = self.engine.hover(x, y);
+        let (pointer, mut rects) = self.engine.hover(x, y);
+        if self.review.is_some() {
+            let b = if page { self.block_at(y) } else { None };
+            rects.extend(self.engine.set_gutter(b.map(|b| (b.top, b.height))));
+        }
         self.set_pointer(match pointer {
             Pointer::Text => "xterm",
             Pointer::Hand => self.probe.hand(),
@@ -969,6 +1017,96 @@ impl Preview {
             return false;
         }
         self.invalidate(&rects);
+        true
+    }
+
+    /// The source block at page y (CSS px), if any: not the gaps between blocks or the cards.
+    fn block_at(&self, y: f64) -> Option<crate::render::engine::Block> {
+        self.layout.blocks.iter().find(|b| y >= b.top && y < b.top + b.height).copied()
+    }
+
+    /// Opens a comment on the block at page y, else the one under the pointer, else the first
+    /// one that starts in view.
+    fn comment_here(&mut self, y: Option<f64>) -> bool {
+        let hovered = self.hover_at.filter(|(spot, _)| self.region(spot.cell) == Region::Page).map(|(spot, _)| self.grid().point(spot, 0.5).1);
+        let (top, height) = self.view_css();
+        let block = y.or(hovered).and_then(|y| self.block_at(y)).or_else(|| self.layout.blocks.iter().find(|b| b.top >= top && b.top < top + height).copied()).or_else(|| self.block_at(top));
+        let Some(b) = block else {
+            self.notify("Nothing here to comment on");
+            return false;
+        };
+        let quote = self.src.lines().skip(b.start.saturating_sub(1) as usize).take((b.end + 1).saturating_sub(b.start) as usize).map(str::to_string).collect();
+        let label = lines_label(b.start, b.end);
+        self.app.draft = Some(Draft { on: DraftOn::Lines { start: b.start, end: b.end }, title: format!("Comment on {label}"), quote, ed: Editor::default() });
+        self.show_composer(true)
+    }
+
+    /// Draws the comment being written into the page (or takes the box away), and scrolls so
+    /// the box is in view: all of it when `whole`, else at least the caret's end of it.
+    fn show_composer(&mut self, whole: bool) -> bool {
+        use crate::render::layout::Composer;
+        let c = self.app.draft.as_ref().map(|d| Composer {
+            after: match d.on {
+                DraftOn::Lines { end, .. } => Some(end),
+                DraftOn::Overall => None,
+            },
+            label: d.title.clone(),
+            text: d.ed.text.clone(),
+            cursor: d.ed.cursor,
+            placeholder: "Leave a comment".into(),
+            save: "Comment".into(),
+        });
+        self.engine.set_composer(c);
+        self.relayout();
+        let Some(b) = self.layout.composer else { return false };
+        let (top, height) = self.view_css();
+        let margin = 16.0;
+        let want = if b.top < top {
+            Some(b.top - margin)
+        } else if b.top + b.height > top + height {
+            Some(if whole { b.top - margin } else { b.top + b.height + margin - height })
+        } else {
+            None
+        };
+        if let Some(y) = want {
+            let row = self.row_of(y.max(0.0));
+            let actions = self.app.scroll_to(row);
+            return self.act_all(actions);
+        }
+        false
+    }
+
+    /// A click while a comment is being written: its Comment and Cancel buttons work, the rest
+    /// of the page doesn't.
+    fn composer_click(&mut self, spot: Spot) -> bool {
+        let Some(b) = self.layout.composer else { return false };
+        let (x, y) = self.grid().point(spot, 0.5);
+        let inside = |r: [f64; 4]| x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
+        if inside(b.save) {
+            return self.act(Action::SaveDraft);
+        }
+        if inside(b.cancel) {
+            self.app.draft = None;
+            return self.act(Action::CloseDraft);
+        }
+        false
+    }
+
+    /// Saves the comment being written and shows it on the page.
+    fn save_draft(&mut self) -> bool {
+        let Some(d) = self.app.draft.take() else { return false };
+        let Some(r) = self.review.as_mut() else { return true };
+        let body = d.ed.text.trim().to_string();
+        let saved = match d.on {
+            DraftOn::Lines { .. } if body.is_empty() => Ok(()),
+            DraftOn::Lines { start, end } => r.add(&self.src, start, end, body),
+            DraftOn::Overall => r.set_overall(&self.src, body),
+        };
+        self.engine.set_threads(r.threads(), false);
+        if let Err(e) = saved {
+            self.notify(&format!("Can't save the review: {e}"));
+        }
+        self.show_composer(false);
         true
     }
 
@@ -1227,6 +1365,12 @@ impl Preview {
         self.size_engine(css_width);
         self.app.expanded = false;
         self.touched = false;
+        if let Some(r) = self.review.as_mut() {
+            if let Err(e) = r.reanchor(&src) {
+                self.app.notice = Some(Notice { text: format!("Can't save the review: {e}"), click: OnClick::Hints });
+            }
+            self.engine.set_threads(r.threads(), false);
+        }
         self.engine.load(&src, &base, self.app.wrap, theme);
         self.settle_scale();
         trace::mark("page loaded");
@@ -1696,6 +1840,9 @@ impl Preview {
     /// A link to the page shown jumps within it, as a `#` link does. Returns whether to show.
     fn follow(&mut self, url: &str) -> bool {
         match link::follow(url, &self.base) {
+            link::Follow::Show(path, _) if self.review.is_some() && std::fs::canonicalize(&self.file).is_ok_and(|f| f != path) => {
+                self.notify("A review stays on one file");
+            }
             link::Follow::Refuse(why) => self.notify(&why),
             link::Follow::Show(path, heading) if !self.stdin && std::fs::canonicalize(&self.file).is_ok_and(|f| f == path) => {
                 // At the heading, else the top, as opening the file would land.

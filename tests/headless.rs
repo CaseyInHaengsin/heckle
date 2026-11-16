@@ -24,7 +24,7 @@ fn tiles_follow_the_file() {
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("doc.md");
     std::fs::write(&file, "# one\n\ntext\n").unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_mdd")).env("MDDOG_CACHE_DIR", test_cache()).args(["--headless", "40"]).arg(&file).stdout(Stdio::piped()).spawn().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_heckle")).env("MDDOG_CACHE_DIR", test_cache()).args(["--headless", "40"]).arg(&file).stdout(Stdio::piped()).spawn().unwrap();
     // A reader thread, so a render that never comes fails the test instead of hanging it.
     let (tx, rx) = std::sync::mpsc::channel();
     let stdout = child.stdout.take().unwrap();
@@ -63,7 +63,7 @@ fn tiles_fit_the_herdr_storage_limit() {
     let file = dir.join("doc.md");
     std::fs::write(&file, format!("# long\n\n{}", "line\n\n".repeat(300))).unwrap();
     let mut child =
-        Command::new(env!("CARGO_BIN_EXE_mdd")).env("MDDOG_CACHE_DIR", test_cache()).args(["--headless", "200"]).arg(&file).env("TERM_PROGRAM", "herdr").stdout(Stdio::piped()).spawn().unwrap();
+        Command::new(env!("CARGO_BIN_EXE_heckle")).env("MDDOG_CACHE_DIR", test_cache()).args(["--headless", "200"]).arg(&file).env("TERM_PROGRAM", "herdr").stdout(Stdio::piped()).spawn().unwrap();
     let line = serde_json::from_str::<serde_json::Value>(&BufReader::new(child.stdout.take().unwrap()).lines().next().unwrap().unwrap()).unwrap();
     let sizes: Vec<_> = line["tiles"].as_array().unwrap().iter().map(|t| png_size(t["file"].as_str().unwrap())).collect();
     term(child.id() as i32);

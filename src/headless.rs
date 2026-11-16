@@ -30,7 +30,7 @@ const WEBP_LOSSY_FROM: usize = 12_000;
 pub fn run(file: PathBuf, cols: u16, webp: bool) -> i32 {
     let dir = crate::tmp::tiles_dir();
     if let Err(e) = std::os::unix::fs::DirBuilderExt::mode(&mut std::fs::DirBuilder::new(), 0o700).create(&dir) {
-        eprintln!("mdd: can't make {}: {}", dir.display(), term::io_error(&e));
+        eprintln!("heckle: can't make {}: {}", dir.display(), term::io_error(&e));
         return 1;
     }
     if let Ok(mut signals) = signal_hook::iterator::Signals::new([libc::SIGTERM, libc::SIGINT, libc::SIGHUP]) {
@@ -47,7 +47,7 @@ pub fn run(file: PathBuf, cols: u16, webp: bool) -> i32 {
         let _ = tx.send(());
     }) else {
         let _ = std::fs::remove_dir_all(&dir);
-        eprintln!("mdd: can't watch {} for changes", term::printable(&file.display().to_string()));
+        eprintln!("heckle: can't watch {} for changes", term::printable(&file.display().to_string()));
         return 1;
     };
     let engine = Engine::new(800.0, crate::term::screen::display_scale(), crate::config::font_smoothing());
@@ -59,7 +59,7 @@ pub fn run(file: PathBuf, cols: u16, webp: bool) -> i32 {
     let mut swept = false;
     let code = loop {
         if let Err(e) = r.render() {
-            eprintln!("mdd: {e}");
+            eprintln!("heckle: {e}");
             r.drop_rounds(|g| g > r.round);
         }
         // Claude Code SIGKILLs this process on each width change, so the sweep is what removes the old tile folders.

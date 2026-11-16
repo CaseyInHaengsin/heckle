@@ -19,6 +19,26 @@ pub struct Opts {
     pub wrap_code: bool,
     /// Details blocks the user toggled (by id).
     pub toggled: HashSet<usize>,
+    /// Review conversations, drawn as cards under the blocks they're on.
+    pub threads: Vec<Thread>,
+    /// The review comment being written, drawn as a box after its block's conversations.
+    pub composer: Option<Composer>,
+}
+
+mod cards;
+pub use cards::{Composer, ThreadMsg};
+
+/// A review conversation to draw as a card. It sits under the block that holds source line
+/// `after`, or at the end of the page when `after` is None or past every block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Thread {
+    pub id: u32,
+    pub after: Option<u32>,
+    /// "Conversation on lines 4–6", in the header bar.
+    pub head: String,
+    pub outdated: bool,
+    pub resolved: bool,
+    pub msgs: Vec<ThreadMsg>,
 }
 
 #[derive(Clone)]
@@ -166,6 +186,8 @@ pub fn layout(fonts: &mut Fonts, th: &Theme, o: &Opts, doc: &Doc, images: &mut I
     let mx = PAD * s;
     let mut y = PAD * s;
     let w = (o.width - 2.0 * mx).max(40.0 * s);
+    // Each thread's block: the first whose source reaches its line, else the end of the page.
+    let home = |after: Option<u32>| after.and_then(|n| doc.lines.iter().position(|r| r.is_some_and(|(_, e)| e >= n)));
     for (i, b) in doc.blocks.iter().enumerate() {
         if i > 0 {
             y += l.gap(&doc.blocks[i - 1], b, false);
@@ -176,6 +198,18 @@ pub fn layout(fonts: &mut Fonts, th: &Theme, o: &Opts, doc: &Doc, images: &mut I
         if let Some(Some((a, e))) = doc.lines.get(i) {
             l.page.blocks.push(SrcBlock { start: *a, end: *e, top, h: y - top, tx: (tx, l.page.text.len()) });
         }
+        for t in o.threads.iter().filter(|t| home(t.after) == Some(i)) {
+            l.thread(t, mx, w, &mut y);
+        }
+        if let Some(c) = o.composer.as_ref().filter(|c| home(c.after) == Some(i)) {
+            l.composer(c, mx, w, &mut y);
+        }
+    }
+    for t in o.threads.iter().filter(|t| home(t.after).is_none()) {
+        l.thread(t, mx, w, &mut y);
+    }
+    if let Some(c) = o.composer.as_ref().filter(|c| home(c.after).is_none()) {
+        l.composer(c, mx, w, &mut y);
     }
     l.page.h = y + th.page_bottom * s;
     l.page

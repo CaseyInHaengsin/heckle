@@ -4,23 +4,24 @@ use mddog::*;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 
-const USAGE: &str = "usage: mdd [file.md|folder]
-       command | mdd
-       mdd review [--out PATH] file.md";
+const USAGE: &str = "usage: heckle [file.md|folder]
+       command | heckle
+       heckle review [--out PATH] file.md";
 
-const HELP: &str = "Preview Markdown in your terminal the way a browser renders it.
+const HELP: &str = "Read Markdown in your terminal the way a browser renders it, and heckle it:
+leave review comments that Claude reads and answers.
 
 Usage
-  mdd                       list Markdown files from current repo or folder to preview
-  mdd file.md               preview a Markdown file
-  mdd folder                list Markdown files in a folder to preview
-  command | mdd             preview the output of a command in Markdown format
+  heckle                    list Markdown files from current repo or folder to preview
+  heckle file.md            preview a Markdown file
+  heckle folder             list Markdown files in a folder to preview
+  command | heckle          preview the output of a command in Markdown format
 
 Review
-  mdd review file.md        preview a file and comment on it (saves a review file)
-    --out PATH              where to save the review (default ~/.local/state/mddog/reviews/)
-  mdd result [ID]           print a review (the newest by default); --list, --json, --path
-  mdd reply [ID] --to N T   add Claude's reply T to comment N (or --overall)
+  heckle review file.md     preview a file and comment on it (saves a review file)
+    --out PATH              where to save the review (default ~/.local/state/heckle/reviews/)
+  heckle result [ID]        print a review (the newest by default); --list, --json, --path
+  heckle reply [ID] --to N T  add Claude's reply T to comment N (or --overall)
 
 Options
   -h, --help                show this help
@@ -55,7 +56,7 @@ fn main() {
                 return;
             }
             "-V" | "--version" if options => {
-                println!("mdd {}", env!("CARGO_PKG_VERSION"));
+                println!("heckle {}", env!("CARGO_PKG_VERSION"));
                 return;
             }
             "--" if options => options = false,
@@ -98,7 +99,7 @@ fn main() {
     }
     let code = if file == "-" {
         if stdin_is_tty() {
-            eprintln!("{}", fit("mdd: reading Markdown from the keyboard. Type it, then press Ctrl-D to open it, or Ctrl-C to quit."));
+            eprintln!("{}", fit("heckle: reading Markdown from the keyboard. Type it, then press Ctrl-D to open it, or Ctrl-C to quit."));
         }
         let path = stdin_copy().unwrap_or_else(|e| fail(&e));
         let code = preview::run(path.clone(), true);
@@ -113,13 +114,13 @@ fn main() {
 
 fn done(r: Result<(), String>) -> ! {
     if let Err(e) = r {
-        eprintln!("mdd: {e}");
+        eprintln!("heckle: {e}");
         std::process::exit(1);
     }
     std::process::exit(0);
 }
 
-/// `mdd review [--out PATH] FILE`
+/// `heckle review [--out PATH] FILE`
 fn review_cmd(args: &[String]) -> i32 {
     let mut out: Option<PathBuf> = None;
     let mut file: Option<&str> = None;
@@ -146,7 +147,7 @@ fn review_cmd(args: &[String]) -> i32 {
         eprintln!("{}", fit(&why));
         std::process::exit(1);
     }
-    review::open(Path::new(file), out.as_deref(), || preview::run(PathBuf::from(file), false)).unwrap_or_else(|e| fail(&e))
+    review::open(Path::new(file), out.as_deref(), |session| preview::run_review(PathBuf::from(file), session)).unwrap_or_else(|e| fail(&e))
 }
 
 fn stdin_is_tty() -> bool {
@@ -180,7 +181,7 @@ fn stdin_copy() -> Result<PathBuf, String> {
 fn check_file(path: &Path) -> Result<(), String> {
     let shown = term::printable(&path.display().to_string());
     if let Some(url) = ["http://", "https://"].iter().find(|p| shown.starts_with(*p)).map(|_| &shown) {
-        return Err(format!("can't open URLs, only local files. Download it first: curl -sL {url} | mdd"));
+        return Err(format!("can't open URLs, only local files. Download it first: curl -sL {url} | heckle"));
     }
     let meta = match std::fs::metadata(path) {
         Ok(m) => m,
@@ -252,12 +253,12 @@ fn distance(a: &str, b: &str) -> usize {
 }
 
 fn usage(msg: &str) -> ! {
-    eprintln!("{}\n{USAGE}\nRun mdd --help for the options.", fit(&format!("mdd: {}", term::printable(msg))));
+    eprintln!("{}\n{USAGE}\nRun heckle --help for the options.", fit(&format!("heckle: {}", term::printable(msg))));
     std::process::exit(2);
 }
 
 fn fail(msg: &str) -> ! {
-    eprintln!("{}", fit(&format!("mdd: {}", term::printable(msg))));
+    eprintln!("{}", fit(&format!("heckle: {}", term::printable(msg))));
     std::process::exit(2);
 }
 

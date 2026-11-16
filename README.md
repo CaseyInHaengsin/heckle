@@ -1,3 +1,23 @@
+# heckle
+
+Read a Markdown doc in your terminal the way a browser shows it, and heckle it: leave
+GitHub-style review comments on its blocks that Claude reads, answers, and acts on.
+
+heckle is a fork of [mddog](https://github.com/qu8n/mddog), which does the rendering. The
+fork adds a review mode:
+
+```sh
+heckle review plan.md                 # read it, press a (or click a block's +) to comment
+heckle result                         # print the newest review, for Claude to read
+heckle reply --to 2 "Split it in two" # Claude answers comment 2
+```
+
+In review mode, `a` comments on a block, `A` writes the overall comment, and `F` finishes the
+review with a verdict. Reviews are saved to `~/.local/state/heckle/reviews/`. Everything below
+is mddog's own README.
+
+---
+
 <h1 align="center">
   <img src="assets/logo.webp" width="160" alt="Logo"/><br/>
   mddog

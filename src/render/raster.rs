@@ -24,6 +24,8 @@ pub struct Overlay {
     pub hover_btn: Option<usize>,
     pub copied_btn: Option<usize>,
     pub expanded: Option<Expanded>,
+    /// The block a review comment would go on, (top, height): a bar and a + in the left margin.
+    pub gutter: Option<(f32, f32)>,
 }
 
 /// An expanded diagram over the view: the box it covers and the diagram, drawn to fit it (device px).
@@ -234,6 +236,21 @@ pub fn render_into(fonts: &mut Fonts, cx: &Ctx, top: f32, h: usize, w: usize, it
             set_fill(&ctx, 0xffffff, 1.0);
             fonts.draw(&ctx, f, t, bx + px, by + py + a);
         }
+    }
+    if let Some((gy, gh)) = cx.ov.gutter
+        && gy <= top + h as f32
+        && gy + gh >= top
+    {
+        let sc = f64::from(cx.scale);
+        set_fill(&ctx, cx.th.link, 0.85);
+        rrect(&ctx, 9.0 * sc, f64::from(gy), 2.0 * sc, f64::from(gh), sc);
+        ctx.fill_path();
+        rrect(&ctx, 2.0 * sc, f64::from(gy), 16.0 * sc, 16.0 * sc, 4.0 * sc);
+        ctx.fill_path();
+        set_fill(&ctx, 0xffffff, 1.0);
+        let (cx0, cy0) = (10.0 * sc, f64::from(gy) + 8.0 * sc);
+        ctx.fill_rect(CGRect::new(&CGPoint::new(cx0 - 4.5 * sc, cy0 - 0.75 * sc), &CGSize::new(9.0 * sc, 1.5 * sc)));
+        ctx.fill_rect(CGRect::new(&CGPoint::new(cx0 - 0.75 * sc, cy0 - 4.5 * sc), &CGSize::new(1.5 * sc, 9.0 * sc)));
     }
     for &(x, y, w, hh, cur) in &cx.ov.marks {
         if y > top + h as f32 || y + hh < top {

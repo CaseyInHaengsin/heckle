@@ -1,3 +1,5 @@
+use crate::review::editor::Editor;
+use crate::review::model::Verdict;
 use crate::term::Key;
 
 /// How many places Backspace goes back through: jumps in a file, and files.
@@ -165,6 +167,35 @@ pub enum Action {
     Browse,
     BackFile,
     Quit,
+    /// Review mode: comment on the block under the pointer or at the top of the view.
+    CommentHere,
+    /// Review mode: write the overall comment.
+    CommentOverall,
+    /// Review mode: save the comment being written.
+    SaveDraft,
+    /// Review mode: drop the comment being written and go back to the page.
+    CloseDraft,
+    /// Review mode: the comment being written changed, so draw it again.
+    Draft,
+    /// Review mode: finish the review with this verdict.
+    Finish(Verdict),
+}
+
+/// A comment being written, shown over the page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DraftOn {
+    Lines { start: u32, end: u32 },
+    Overall,
+}
+
+#[derive(Clone, Debug)]
+pub struct Draft {
+    pub on: DraftOn,
+    /// "Comment on lines 4–6", shown at the top.
+    pub title: String,
+    /// The source lines it's on, shown under the title.
+    pub quote: Vec<String>,
+    pub ed: Editor,
 }
 
 #[derive(Default)]
@@ -196,6 +227,11 @@ pub struct App {
     bracket: Option<char>,
     numkey: Option<(char, usize)>,
     reverse: bool,
+    /// The file is open for review (`heckle review`), which turns on the comment keys.
+    pub review: bool,
+    pub draft: Option<Draft>,
+    /// F was pressed: the next key picks the verdict.
+    pub finishing: bool,
 }
 
 impl App {
@@ -434,6 +470,19 @@ impl App {
                 }
             };
         }
+        if self.draft.is_some() && !matches!(key, Key::WheelUp(..) | Key::WheelDown(..) | Key::WheelLeft(..) | Key::WheelRight(..)) {
+            return self.draft_key(key);
+        }
+        if self.finishing {
+            self.finishing = false;
+            let v = match key {
+                Key::Char('a') => Verdict::Approve,
+                Key::Char('r') => Verdict::RequestChanges,
+                Key::Char('c') => Verdict::Comment,
+                _ => return vec![Action::Status],
+            };
+            return vec![Action::Finish(v)];
+        }
         if let Some(draft) = self.prompt.as_mut() {
             return match key {
                 Key::Enter => {
@@ -527,6 +576,12 @@ impl App {
                 vec![Action::ToggleToc]
             }
             Key::Char('q' | 'Q') | Key::Ctrl('c') => vec![Action::Quit],
+            Key::Char('a') if self.review => vec![Action::CommentHere],
+            Key::Char('A') if self.review => vec![Action::CommentOverall],
+            Key::Char('F') if self.review => {
+                self.finishing = true;
+                vec![Action::Status]
+            }
             Key::Char('e' | 'v') => vec![Action::Editor],
             Key::Char('c') => vec![Action::Copy],
             Key::Ctrl('z') => vec![Action::Suspend],
@@ -554,6 +609,33 @@ impl App {
             Key::Char('U') if self.toc_visible && !self.entries.is_empty() => self.toc_scroll(false),
             _ => vec![],
         }
+    }
+
+    /// Keys while a comment is being written: they edit it. Ctrl-S saves, Esc drops it.
+    fn draft_key(&mut self, key: Key) -> Vec<Action> {
+        let Some(d) = self.draft.as_mut() else { return vec![] };
+        let ed = &mut d.ed;
+        match key {
+            Key::Ctrl('s') => return vec![Action::SaveDraft],
+            Key::Esc | Key::Ctrl('c') => {
+                self.draft = None;
+                return vec![Action::CloseDraft];
+            }
+            Key::Enter => ed.insert("\n"),
+            Key::Backspace => ed.backspace(),
+            Key::Left => ed.left(),
+            Key::Right => ed.right(),
+            Key::Up => ed.up(),
+            Key::Down => ed.down(),
+            Key::Home | Key::Ctrl('a') => ed.home(),
+            Key::End | Key::Ctrl('e') => ed.end(),
+            Key::Ctrl('w') => ed.delete_word_back(),
+            Key::Ctrl('u') => ed.delete_to_line_start(),
+            Key::Ctrl('i') => ed.insert("    "),
+            Key::Char(c) if !c.is_control() => ed.insert(c.encode_utf8(&mut [0; 4])),
+            _ => return vec![],
+        }
+        vec![Action::Draft]
     }
 
     fn side(&self, key: Key) -> Vec<Action> {
@@ -737,6 +819,9 @@ impl App {
     }
 
     pub fn status(&self, name: &str) -> String {
+        if self.finishing {
+            return " Finish the review: a approve · r request changes · c comment · any other key cancels ".into();
+        }
         if let Some(d) = &self.prompt {
             return format!(" /{d} ");
         }
@@ -776,6 +861,12 @@ impl App {
         if self.prompt.is_some() {
             return vec![("Enter", "search", Key::Enter), ("Esc", "cancel", Key::Esc)];
         }
+        if self.draft.is_some() {
+            return vec![("Ctrl-S", "save", Key::Ctrl('s')), ("Esc", "cancel", Key::Esc)];
+        }
+        if self.finishing {
+            return vec![];
+        }
         if self.help {
             return vec![QUIT, ("?", "back to the page", Key::Char('?')), ("j/k", "scroll", Key::Char(' '))];
         }
@@ -786,6 +877,10 @@ impl App {
             return vec![QUIT, ("n/N", "next/prev", Key::Char('n')), ("Esc", "clear", Key::Esc), HELP];
         }
         let mut h = vec![HELP, ("/", "find", Key::Char('/'))];
+        if self.review {
+            h.push(("a", "comment", Key::Char('a')));
+            h.push(("F", "finish", Key::Char('F')));
+        }
         if !self.entries.is_empty() {
             h.push(("t", "toc", Key::Char('t')));
         }
@@ -1389,6 +1484,56 @@ mod tests {
         a.toc_offset = 2;
         a.toc_click(3);
         assert_eq!(a.scroll, 60);
+    }
+
+    fn draft() -> Draft {
+        Draft { on: DraftOn::Lines { start: 1, end: 2 }, title: String::new(), quote: vec![], ed: Editor::default() }
+    }
+
+    #[test]
+    fn r01_review_keys_only_in_review_mode() {
+        let mut a = app(100, 20);
+        assert!(keys(&mut a, &[Key::Char('a'), Key::Char('A'), Key::Char('F')]).is_empty());
+        assert!(!a.finishing);
+        let mut a = App { review: true, ..app(100, 20) };
+        assert_eq!(a.handle(Key::Char('a')), vec![Action::CommentHere]);
+        assert_eq!(a.handle(Key::Char('A')), vec![Action::CommentOverall]);
+        assert!(a.hints().iter().any(|h| h.0 == "a"));
+    }
+
+    #[test]
+    fn r02_draft_keys_edit_the_text() {
+        let mut a = App { review: true, draft: Some(draft()), ..app(100, 20) };
+        let acts = keys(&mut a, &[Key::Char('q'), Key::Char('j'), Key::Enter, Key::Char('x'), Key::Backspace, Key::Char('y')]);
+        assert!(acts.iter().all(|x| *x == Action::Draft), "{acts:?}");
+        assert_eq!(a.draft.as_ref().map(|d| d.ed.text.as_str()), Some("qj\ny"));
+        assert_eq!(a.scroll, 0);
+        // The wheel still scrolls the page under the comment box.
+        assert!(!a.handle(Key::WheelDown(1, 1)).is_empty());
+    }
+
+    #[test]
+    fn r03_draft_save_and_cancel() {
+        let mut a = App { review: true, draft: Some(draft()), ..app(100, 20) };
+        assert_eq!(a.handle(Key::Ctrl('s')), vec![Action::SaveDraft]);
+        assert!(a.draft.is_some(), "the viewer takes the draft when it saves");
+        assert_eq!(a.handle(Key::Esc), vec![Action::CloseDraft]);
+        assert!(a.draft.is_none());
+        a.draft = Some(draft());
+        assert_eq!(a.handle(Key::Ctrl('c')), vec![Action::CloseDraft]);
+    }
+
+    #[test]
+    fn r04_finish_picks_a_verdict() {
+        let mut a = App { review: true, ..app(100, 20) };
+        for (k, v) in [('a', Verdict::Approve), ('r', Verdict::RequestChanges), ('c', Verdict::Comment)] {
+            a.handle(Key::Char('F'));
+            assert!(a.status("x").contains("Finish"));
+            assert_eq!(a.handle(Key::Char(k)), vec![Action::Finish(v)]);
+        }
+        a.handle(Key::Char('F'));
+        assert_eq!(a.handle(Key::Char('z')), vec![Action::Status]);
+        assert!(!a.finishing);
     }
 
     #[test]

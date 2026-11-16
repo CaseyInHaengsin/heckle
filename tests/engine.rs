@@ -257,3 +257,44 @@ fn a_display_p3_page_matches_the_cells_around_it() {
     e.set_display_p3(true);
     assert_eq!(corner(&e), [14, 17, 22, 255]);
 }
+
+#[test]
+fn review_threads_sit_under_their_block_and_push_the_rest_down() {
+    use mddog::render::layout::{Composer, Thread, ThreadMsg};
+    let src = "# Plan\n\nStep one.\n\nStep two.\n";
+    let e = engine(src);
+    let before = e.layout();
+    let msg = |claude: bool, body: &str| ThreadMsg { name: if claude { "Claude" } else { "You" }.into(), claude, verb: "commented".into(), body: body.into() };
+    let card = |id, after| Thread {
+        id,
+        after,
+        head: "Conversation on line 3".into(),
+        outdated: false,
+        resolved: false,
+        msgs: vec![msg(false, "Split this step in two, one for parsing and one for checking, so each can be tested on its own."), msg(true, "Done.")],
+    };
+    e.set_threads(vec![card(1, Some(3)), card(2, None)], true);
+    let l = e.layout();
+    let ids: Vec<u32> = l.threads.iter().map(|t| t.0).collect();
+    assert_eq!(ids, [1, 2]);
+    let (_, top, h) = l.threads[0];
+    // Under "Step one." (line 3), above "Step two." (line 5), which moved down by at least the card.
+    assert!(top >= l.blocks[1].top + l.blocks[1].height, "card overlaps its block");
+    assert!(l.blocks[2].top >= top + h, "the next block overlaps the card");
+    assert!(l.blocks[2].top - before.blocks[2].top >= h);
+    // The end-of-page card comes after every block, and the source blocks stay three.
+    assert_eq!(l.blocks.len(), 3);
+    assert!(l.threads[1].1 >= l.blocks[2].top + l.blocks[2].height);
+    // The comment box goes after the block's conversations, and its buttons sit inside it.
+    let composer = Composer { after: Some(3), label: "Comment on line 3".into(), text: "Looks good".into(), cursor: 4, placeholder: "Leave a comment".into(), save: "Comment".into() };
+    e.set_composer(Some(composer));
+    let l = e.layout();
+    let c = l.composer.unwrap_or_else(|| unreachable!());
+    assert!(c.top >= l.threads[0].1 + l.threads[0].2 && c.top + c.height <= l.blocks[2].top);
+    assert!(c.save[1] > c.top && c.save[1] + c.save[3] <= c.top + c.height);
+    if let Ok(dir) = std::env::var("MDDOG_DUMP_PNG") {
+        let snap = e.snapshot(0.0, l.height, 2.0, |n| Some(vec![0u8; n])).unwrap_or_else(|| unreachable!());
+        let png = mddog::term::kitty::png(snap.width, snap.height, &snap.rgba).unwrap_or_else(|| unreachable!());
+        std::fs::write(std::path::Path::new(&dir).join("threads.png"), png).unwrap_or_else(|_| unreachable!());
+    }
+}

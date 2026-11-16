@@ -103,4 +103,14 @@ Images in the page:
 | I1 | a remote image arrives | The page lays out again with the image and keeps its position by content. For 60 s after a load the viewer checks for images often and holds back prefetch. An image that arrives later still shows. A fetch that fails leaves the alt text in place until a reload | `images_after_the_late_limit_still_arrive` (in `src/viewer/preview.rs`), `a_failed_remote_image_keeps_its_alt_text` (in `tests/engine.rs`) |
 | I2 | an SVG with a huge size | An SVG draws at most 16384 px a side and 2^25 pixels, counted after rounding to whole pixels. A bigger one is scaled down to fit, keeping its shape. A Mermaid diagram that would be bigger shows its source as a code block. An image SVG that still won't draw shows its alt text | `a_huge_draw_fits_the_limits` (in `src/render/svg.rs`), `a_huge_svg_draws_scaled_down` and `an_svg_whose_rounded_size_is_too_big_still_draws` (in `tests/engine.rs`) |
 
+Review mode (`heckle review FILE`, a change in this fork):
+
+| # | Key or event | Behavior | Test |
+|---|---|---|---|
+| R1 | `a`, `A`, `F` outside review mode | Do nothing, as before | `r01_review_keys_only_in_review_mode` |
+| R2 | `a`, or a click on a block's + in the left margin | Opens a comment box in the page under the block (after its conversations) for the block under the pointer, else the first block that starts in view, and scrolls it into view. `A` opens it for the overall comment at the end of the page | `r01_review_keys_only_in_review_mode` |
+| R3 | typing in the comment editor | Printable keys insert, Enter starts a new line, Backspace, arrows, Home, End, Ctrl-w and Ctrl-u edit. `q`, `j` and the other page keys are text here. The wheel still scrolls. Clicks do nothing except on the box's Comment and Cancel buttons | `r02_draft_keys_edit_the_text` |
+| R4 | Ctrl-s, Esc or Ctrl-c in the comment editor | Ctrl-s saves the comment and shows it as a card under its block. Esc and Ctrl-c drop it and go back to the page, never quit | `r03_draft_save_and_cancel` |
+| R5 | `F`, then `a`, `r` or `c` | Finishes the review as approved, changes requested, or comments. Any other key cancels | `r04_finish_picks_a_verdict` |
+
 Not carried over from leaf, because they are outside a preview of one file: goto-line (`:`, Ctrl-g, Ctrl-l), code-block selection, the theme picker, line numbers, path copying, the watch toggle, and leaf's help popup (mddog has its own `?` screen, row 38).

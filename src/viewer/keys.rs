@@ -30,6 +30,12 @@ Contents
   D U, wheel over it      scroll the list in the contents panel (or drag its scroll bar)
   click an entry          jump to that section
 
+Review (heckle review FILE)
+  a, click a block's +    comment on the block under the pointer, else the first one in view
+  A                       write the overall comment
+  Ctrl-s, Esc             in the comment editor: save, cancel
+  F then a, r or c        finish: approve, request changes, or comment
+
 Other
   w                       wrap or unwrap long lines in code blocks
   e or v                  open the file in $EDITOR (default vi), then reload it
