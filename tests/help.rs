@@ -1335,3 +1335,36 @@ fn open_shows_a_closed_review_again() {
     assert_eq!(quit, Some(true));
     assert!(reopened.starts_with("# Review: in progress") && reopened.contains("> Keep me"), "{reopened}");
 }
+
+#[test]
+fn a_paste_into_the_comment_box_lays_it_out_once_per_batch() {
+    let dir = scratch("paste");
+    let file = dir.join("plan.md");
+    std::fs::write(&file, "# Plan\n\nStep one.\n").unwrap();
+    let review = dir.join("out/review.md");
+    let state = dir.join("state");
+    let trace = dir.join("trace.log");
+    let env = [("XDG_STATE_HOME", state.to_str().unwrap()), ("MDDOG_TRACE", trace.to_str().unwrap())];
+    let args = ["review", "--out", review.to_str().unwrap(), file.to_str().unwrap()];
+    let Viewer { mut child, mut tty, out } = start(&args, None, 80, &env, false);
+    wait_for(&out, 0, b"a=p,");
+    tty.write_all(b"a").unwrap();
+    wait_for(&out, 0, b"Ctrl-S");
+    // A paste arrives as one burst of keys: 300 of them here.
+    let text = "the shared list cache stores only paths (needs gadget id + rule). ".repeat(5);
+    tty.write_all(text.trim_end().as_bytes()).unwrap();
+    tty.write_all(b"\x13").unwrap();
+    let end = Instant::now() + LIMIT;
+    while !std::fs::read_to_string(&review).unwrap_or_default().contains("+ rule). the shared") && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    tty.write_all(b"q").unwrap();
+    let _ = exits_within(&mut child, LIMIT);
+    let _ = child.kill();
+    // The viewer traces each layout of the comment box.
+    let layouts = std::fs::read_to_string(&trace).unwrap_or_default().matches(" composer ComposerRects").count();
+    let saved = std::fs::read_to_string(&review).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(saved.contains("+ rule). the shared"), "{saved}");
+    assert!(layouts < 30, "the comment box was laid out {layouts} times for one paste");
+}

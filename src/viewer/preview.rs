@@ -212,6 +212,9 @@ pub struct Preview {
     review: Option<Session>,
     /// The page zoom from + and -, on top of the terminal's font zoom: an index into `ZOOMS`.
     zoom: usize,
+    /// The comment being written changed since the page last drew it. The event loop lays it out
+    /// once per batch of keys, so a paste costs one layout, not one per character.
+    draft_dirty: bool,
 }
 
 pub fn run(file: PathBuf, stdin: bool) -> i32 {
@@ -396,6 +399,7 @@ fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>, review: Option<Sessi
         land_on: None,
         review,
         zoom: ZOOMS.iter().position(|&z| z == 1.0).unwrap_or(0),
+        draft_dirty: false,
     };
     p.app.review = p.review.is_some();
     let mut leftover = leftover;
@@ -516,6 +520,9 @@ impl Preview {
                 if self.quit {
                     return;
                 }
+            }
+            if std::mem::take(&mut self.draft_dirty) {
+                need_show |= self.show_composer(false);
             }
             need_show |= self.copy_due();
             if self.notice_until.is_some_and(|due| Instant::now() >= due) {
@@ -794,7 +801,10 @@ impl Preview {
                 self.app.draft = Some(Draft::new(DraftOn::Overall, "Overall review comment".into(), &text));
                 self.show_composer(true)
             }
-            Action::Draft => self.show_composer(false),
+            Action::Draft => {
+                self.draft_dirty = true;
+                false
+            }
             Action::CloseDraft => self.show_composer(false),
             Action::SaveDraft => self.save_draft(),
             Action::Finish(v) => {
