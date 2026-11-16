@@ -264,14 +264,17 @@ fn review_threads_sit_under_their_block_and_push_the_rest_down() {
     let src = "# Plan\n\nStep one.\n\nStep two.\n";
     let e = engine(src);
     let before = e.layout();
-    let msg = |claude: bool, body: &str| ThreadMsg { name: if claude { "Claude" } else { "You" }.into(), claude, verb: "commented".into(), body: body.into() };
+    let msg =
+        |claude: bool, verb: &str, body: &str| ThreadMsg { name: if claude { "Claude" } else { "You" }.into(), claude, verb: verb.into(), body: body.into(), mine: !claude, confirm_delete: false };
     let card = |id, after| Thread {
         id,
         after,
         head: "Conversation on line 3".into(),
         outdated: false,
         resolved: false,
-        msgs: vec![msg(false, "Split this step in two, one for parsing and one for checking, so each can be tested on its own."), msg(true, "Done.")],
+        folded: false,
+        resolvable: true,
+        msgs: vec![msg(false, "commented", "Split this step in two, one for parsing and one for checking, so each can be tested on its own."), msg(true, "replied", "Done.")],
     };
     e.set_threads(vec![card(1, Some(3)), card(2, None)], true);
     let l = e.layout();
@@ -286,7 +289,13 @@ fn review_threads_sit_under_their_block_and_push_the_rest_down() {
     assert_eq!(l.blocks.len(), 3);
     assert!(l.threads[1].1 >= l.blocks[2].top + l.blocks[2].height);
     // The comment box goes after the block's conversations, and its buttons sit inside it.
-    let composer = Composer { after: Some(3), label: "Comment on line 3".into(), text: "Looks good".into(), cursor: 4, placeholder: "Leave a comment".into(), save: "Comment".into() };
+    // Each open card has Resolve conversation, Edit and Delete on your message, and a Reply box.
+    use mddog::render::layout::CardAction;
+    let acts: Vec<CardAction> =
+        l.card_links.iter().map(|&(a, _)| a).filter(|a| matches!(a, CardAction::Resolve(1) | CardAction::Edit(1, 0) | CardAction::Delete(1, 0) | CardAction::Reply(1))).collect();
+    assert_eq!(acts.len(), 4, "{:?}", l.card_links);
+    let composer =
+        Composer { after: Some(3), label: "Comment on line 3".into(), text: "Looks good".into(), cursor: 4, placeholder: "Leave a comment".into(), save: "Comment".into(), in_thread: None, focus: 2 };
     e.set_composer(Some(composer));
     let l = e.layout();
     let c = l.composer.unwrap_or_else(|| unreachable!());

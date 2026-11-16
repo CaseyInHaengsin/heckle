@@ -422,6 +422,8 @@ pub enum Key {
     Mouse(Click, u16, u16),
     /// Cmd-C, sent only by terminals that took the kitty keyboard push.
     Copy,
+    /// Shift-Tab.
+    BackTab,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -459,6 +461,7 @@ fn csi_u(params: &str) -> Option<Key> {
         (0, '\x1b') | (4 | 5, '[') => Some(Key::Esc),
         // Kitty sends these as legacy bytes, but a terminal may not.
         (0, c @ ('\r' | '\t' | '\x7f')) => Some(control(c as u8)),
+        (1, '\t') => Some(Key::BackTab),
         // The keypad's own keys, which flag 1 also reports in this form.
         _ => match code {
             57399..=57415 => Some(match b"0123456789./*-+\r="[(code - 57399) as usize] {
@@ -541,6 +544,7 @@ pub fn parse_input(buf: &mut Vec<u8>, flush_esc: bool) -> Vec<Input> {
                     (b'D', _) => keys.push(Input::Key(Key::Left)),
                     (b'H', _) => keys.push(Input::Key(Key::Home)),
                     (b'F', _) => keys.push(Input::Key(Key::End)),
+                    (b'Z', _) => keys.push(Input::Key(Key::BackTab)),
                     (b'~', "5") => keys.push(Input::Key(Key::PageUp)),
                     (b'~', "6") => keys.push(Input::Key(Key::PageDown)),
                     (b'~', "1" | "7") => keys.push(Input::Key(Key::Home)),

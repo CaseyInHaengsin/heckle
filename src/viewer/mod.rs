@@ -17,6 +17,8 @@ pub enum Event {
     Gone(u32),
     Resize,
     FileChanged,
+    /// Review mode: Claude's replies file changed.
+    RepliesChanged,
     /// The file list has new entries.
     Listed,
     Quit,

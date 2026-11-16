@@ -20,6 +20,23 @@ pub struct Composer {
     pub placeholder: String,
     /// The primary button's label: "Comment".
     pub save: String,
+    /// Drawn at the bottom of this conversation's card (a reply, or an edit) instead of on its own.
+    pub in_thread: Option<u32>,
+    /// What has the keys: 0 the text (it shows the caret), 1 Cancel, 2 the save button (ringed).
+    pub focus: u8,
+}
+
+/// What a click on a review card's link does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardAction {
+    Reply(u32),
+    /// Resolve, or unresolve when resolved.
+    Resolve(u32),
+    /// Open a folded conversation, or fold an open resolved or outdated one.
+    Show(u32),
+    Hide(u32),
+    Edit(u32, usize),
+    Delete(u32, usize),
 }
 
 /// One message in a conversation.
@@ -30,6 +47,10 @@ pub struct ThreadMsg {
     /// "commented" or "replied".
     pub verb: String,
     pub body: String,
+    /// The user's own message: it offers Edit and Delete.
+    pub mine: bool,
+    /// Delete was pressed once: the link asks to confirm.
+    pub confirm_delete: bool,
 }
 
 const GAP: f32 = 12.0;
@@ -47,6 +68,8 @@ const E_BUTTONS: f32 = 46.0;
 const E_MIN_LINES: usize = 3;
 const BTN_H: f32 = 28.0;
 const CLAUDE: Rgb = 0xd97757;
+/// The Reply… box row at a conversation's bottom.
+const FOOT_H: f32 = 52.0;
 
 /// Colors the page theme doesn't name.
 struct Ink {
@@ -62,6 +85,9 @@ impl Ink {
     }
     const fn amber(&self) -> Rgb {
         if self.dark { 0xd29922 } else { 0x9a6700 }
+    }
+    const fn red(&self) -> Rgb {
+        if self.dark { 0xf85149 } else { 0xd1242f }
     }
 }
 
@@ -170,14 +196,30 @@ impl Layouter<'_> {
         lines
     }
 
-    /// A conversation card. Resolved and outdated ones fold to their header.
-    pub(super) fn thread(&mut self, t: &Thread, x: f32, w: f32, y: &mut f32) {
+    /// Right-aligned links ending at `right`, the first label rightmost; records where each is.
+    fn links(&mut self, links: &[(CardAction, &str, Rgb)], right: f32, y: f32) -> f32 {
+        let s = self.s;
+        let f = FontKey::new(SMALL * s, 0);
+        let mut x = right;
+        for &(a, l, color) in links {
+            let lw = self.fonts.measure(f, l);
+            x -= lw;
+            self.label(l, SMALL, 0, color, x, y, x + lw + s);
+            self.page.card_links.push((a, (x - 4.0 * s, y - 4.0 * s, lw + 8.0 * s, 24.0 * s)));
+            x -= 14.0 * s;
+        }
+        x
+    }
+
+    /// A conversation card: a header bar with its links, the messages, then a Reply… box (or
+    /// the reply being written). Folded ones show only the header.
+    pub(super) fn thread(&mut self, t: &Thread, composer: Option<&Composer>, x: f32, w: f32, y: &mut f32) {
         let s = self.s;
         let ink = self.ink();
         let (th_border, th_bg, th_alt, th_muted, th_text, th_link) = (self.th.border, self.th.bg, self.th.alt_bg, self.th.fg_muted, self.th.text, self.th.link);
         *y += GAP * s;
         let top = *y;
-        let folded = t.resolved || t.outdated;
+        let folded = t.folded;
         let card = self.outline(x, top, w, 0.0, Some(th_bg), th_border, RADIUS * s);
         // The header bar, rounded on top only, inside the border.
         let head_h = HEAD * s;
@@ -187,7 +229,15 @@ impl Layouter<'_> {
             self.fill(x, top + head_h - s, w, s, th_border, 0.0);
         }
         let ty = top + (head_h - 16.0 * s) / 2.0;
-        let end = x + w - CPAD * s;
+        let id = t.id;
+        let head_links: Vec<(CardAction, &str, Rgb)> = match (folded, t.resolved, t.outdated) {
+            (true, ..) => vec![(CardAction::Show(id), "Show", th_link)],
+            (false, true, _) => vec![(CardAction::Hide(id), "Hide", th_link), (CardAction::Resolve(id), "Unresolve", th_link)],
+            (false, false, true) => vec![(CardAction::Hide(id), "Hide", th_link), (CardAction::Resolve(id), "Resolve conversation", th_link)],
+            (false, false, false) if t.resolvable => vec![(CardAction::Resolve(id), "Resolve conversation", th_link)],
+            _ => vec![],
+        };
+        let end = self.links(&head_links, x + w - CPAD * s, ty) - 12.0 * s;
         let mut hx = x + CPAD * s;
         if t.outdated {
             let f = FontKey::new(11.0 * s, SEMIBOLD);
@@ -213,9 +263,14 @@ impl Layouter<'_> {
                 let ny = *y + CPAD * s;
                 let dot = if m.claude { CLAUDE } else { th_link };
                 self.fill(x + CPAD * s, ny + s, 14.0 * s, 14.0 * s, dot, 7.0 * s);
+                let mut name_end = end.max(x + w - CPAD * s);
+                if m.mine {
+                    let delete = if m.confirm_delete { "Delete? Click again" } else { "Delete" };
+                    name_end = self.links(&[(CardAction::Delete(id, j), delete, ink.red()), (CardAction::Edit(id, j), "Edit", th_link)], x + w - CPAD * s, ny) - 12.0 * s;
+                }
                 let nx = x + (CPAD + 20.0) * s;
-                let nw = self.label(&m.name, SMALL, SEMIBOLD, th_text, nx, ny, end);
-                self.label(&m.verb, SMALL, 0, th_muted, nx + nw + 6.0 * s, ny, end);
+                let nw = self.label(&m.name, SMALL, SEMIBOLD, th_text, nx, ny, name_end);
+                self.label(&m.verb, SMALL, 0, th_muted, nx + nw + 6.0 * s, ny, name_end);
                 let bx = x + CPAD * s;
                 let bw = w - 2.0 * CPAD * s;
                 let n = if m.body.trim().is_empty() {
@@ -225,6 +280,21 @@ impl Layouter<'_> {
                     self.body(&m.body, bx, *y + M_HEAD * s - 3.0 * s, bw, th_text).len()
                 };
                 *y += (M_HEAD + n as f32 * LINE + M_BOTTOM) * s - 3.0 * s;
+            }
+            self.fill(x, *y, w, s, th_border, 0.0);
+            match composer {
+                Some(c) => {
+                    self.composer(c, x + CPAD * s, w - 2.0 * CPAD * s, y);
+                    *y += CPAD * s;
+                }
+                None => {
+                    // The Reply… box, as on GitHub.
+                    let (bx, by, bw, bh) = (x + CPAD * s, *y + 11.0 * s, w - 2.0 * CPAD * s, 30.0 * s);
+                    self.outline(bx, by, bw, bh, Some(th_alt), th_border, RADIUS * s);
+                    self.label("Reply…", BODY, 0, th_muted, bx + 10.0 * s, by + 6.0 * s, bx + bw);
+                    self.page.card_links.push((CardAction::Reply(id), (bx, by, bw, bh)));
+                    *y += FOOT_H * s;
+                }
             }
         }
         self.page.items[card].h = *y - top;
@@ -260,7 +330,9 @@ impl Layouter<'_> {
             let f = FontKey::new(BODY * s, 0);
             (self.fonts.measure(f, &c.text[a..c.cursor.min(c.text.len()).max(a)]), k)
         };
-        self.fill(tx + cx, ty + (cy as f32 * LINE + 3.0) * s, 1.5 * s, (LINE - 6.0) * s, th_link, 0.0);
+        if c.focus == 0 {
+            self.fill(tx + cx, ty + (cy as f32 * LINE + 3.0) * s, 1.5 * s, (LINE - 6.0) * s, th_link, 0.0);
+        }
         // Buttons, right-aligned: Cancel, then the primary one.
         let by = top + h - f32::midpoint(E_BUTTONS, BTN_H) * s;
         let fb = FontKey::new(SMALL * s, SEMIBOLD);
@@ -268,13 +340,23 @@ impl Layouter<'_> {
         let cancel_w = (self.fonts.measure(FontKey::new(SMALL * s, 0), "Cancel") + 28.0 * s).max(72.0 * s);
         let save_x = x + w - CPAD * s - save_w;
         let cancel_x = save_x - 8.0 * s - cancel_w;
+        // The focused button gets a ring, as a browser draws one.
+        let ring = |l: &mut Self, bx: f32, bw: f32| {
+            l.outline(bx - 3.0 * s, by - 3.0 * s, bw + 6.0 * s, (BTN_H + 6.0) * s, None, th_link, (RADIUS + 3.0) * s);
+            l.outline(bx - 2.0 * s, by - 2.0 * s, bw + 4.0 * s, (BTN_H + 4.0) * s, None, th_link, (RADIUS + 2.0) * s);
+        };
+        match c.focus {
+            1 => ring(self, cancel_x, cancel_w),
+            2 => ring(self, save_x, save_w),
+            _ => {}
+        }
         self.outline(cancel_x, by, cancel_w, BTN_H * s, Some(th_alt), th_border, RADIUS * s);
         let lw = self.fonts.measure(FontKey::new(SMALL * s, 0), "Cancel");
         self.label("Cancel", SMALL, 0, th_text, cancel_x + (cancel_w - lw) / 2.0, by + 7.0 * s, cancel_x + cancel_w);
         self.fill(save_x, by, save_w, BTN_H * s, ink.button(), RADIUS * s);
         let lw = self.fonts.measure(fb, &c.save);
         self.label(&c.save, SMALL, SEMIBOLD, 0xffffff, save_x + (save_w - lw) / 2.0, by + 7.0 * s, save_x + save_w);
-        self.label("Ctrl-S saves · Esc cancels", SMALL, 0, th_muted, tx, by + 7.0 * s, cancel_x - 8.0 * s);
+        self.label("Ctrl-S saves · Tab to the buttons · Esc cancels", SMALL, 0, th_muted, tx, by + 7.0 * s, cancel_x - 8.0 * s);
         *y = top + h;
         self.page.composer = Some(ComposerBox { top, h, save: (save_x, by, save_w, BTN_H * s), cancel: (cancel_x, by, cancel_w, BTN_H * s) });
     }

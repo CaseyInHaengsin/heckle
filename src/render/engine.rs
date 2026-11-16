@@ -37,6 +37,8 @@ pub struct Layout {
     pub threads: Vec<(u32, f64, f64)>,
     /// The review comment box: its top and height, and its Comment and Cancel buttons.
     pub composer: Option<ComposerRects>,
+    /// The review cards' links and Reply boxes.
+    pub card_links: Vec<(layout::CardAction, Rect)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -451,6 +453,7 @@ impl Engine {
             headings: p.heads.iter().map(|h| (h.level, h.text.clone(), f64::from(h.y) / s)).collect(),
             height: f64::from(p.h) / s,
             threads: p.threads.iter().map(|t| (t.id, f64::from(t.top) / s, f64::from(t.h) / s)).collect(),
+            card_links: p.card_links.iter().map(|&(a, r)| (a, self.css(r))).collect(),
             composer: p.composer.map(|c| ComposerRects { top: f64::from(c.top) / s, height: f64::from(c.h) / s, save: self.css(c.save), cancel: self.css(c.cancel) }),
         }
     }

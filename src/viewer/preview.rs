@@ -15,7 +15,6 @@ use super::picker::{self, Pick, Picker};
 use super::position;
 use crate::render::engine::{Engine, Layout, Pointer, Press, Rect, Select};
 use crate::review::Session;
-use crate::review::editor::Editor;
 use crate::review::model::lines_label;
 use crate::term::kitty::{self, Shm};
 use crate::term::screen;
@@ -134,6 +133,8 @@ struct Place {
 
 pub struct Preview {
     watcher: Option<notify::RecommendedWatcher>,
+    /// Review mode: watches Claude's replies file.
+    replies_watcher: Option<notify::RecommendedWatcher>,
     loader: Option<Loader>,
     tty: Tty,
     engine: Engine,
@@ -338,6 +339,7 @@ fn start(file: PathBuf, stdin: bool, list: Option<PathBuf>, review: Option<Sessi
     let base = crate::render::images::base_dir(&file, stdin);
     let mut p = Preview {
         watcher: None,
+        replies_watcher: None,
         loader,
         tty,
         engine,
@@ -467,6 +469,13 @@ impl Preview {
                 let _ = self.tx.send(Event::FileChanged);
             }
         }
+        if let Some(r) = &self.review {
+            let tx = self.tx.clone();
+            self.replies_watcher = watch::spawn(&r.store.replies_path(), move || {
+                let _ = tx.send(Event::RepliesChanged);
+            });
+            let _ = self.tx.send(Event::RepliesChanged);
+        }
     }
 
     fn event_loop(&mut self) {
@@ -563,6 +572,22 @@ impl Preview {
                 again
             }
             Event::FileChanged if !self.opened => false,
+            Event::RepliesChanged => {
+                let Some(r) = self.review.as_mut() else { return false };
+                match r.merge_replies(&self.src) {
+                    Ok(0) => false,
+                    Ok(n) => {
+                        self.engine.set_threads(r.threads(), true);
+                        self.relayout();
+                        self.notify(if n == 1 { "Claude replied" } else { "Claude replied to several comments" });
+                        false
+                    }
+                    Err(e) => {
+                        self.notify(&format!("Can't save the review: {e}"));
+                        false
+                    }
+                }
+            }
             Event::FileChanged => {
                 trace::mark("file event");
                 self.reload_if_changed();
@@ -766,7 +791,7 @@ impl Preview {
             Action::CommentHere => self.comment_here(None),
             Action::CommentOverall => {
                 let text = self.review.as_ref().map(|r| r.review.overall.clone()).unwrap_or_default();
-                self.app.draft = Some(Draft { on: DraftOn::Overall, title: "Overall review comment".into(), quote: vec![], ed: Editor::new(&text) });
+                self.app.draft = Some(Draft::new(DraftOn::Overall, "Overall review comment".into(), &text));
                 self.show_composer(true)
             }
             Action::Draft => self.show_composer(false),
@@ -985,8 +1010,16 @@ impl Preview {
                 if let Some(link) = link {
                     return self.open_link(link) | cleared;
                 }
-                if self.review.is_some() && x < GUTTER && self.block_at(y).is_some() {
-                    return self.comment_here(Some(y)) | cleared;
+                if self.review.is_some() {
+                    if let Some(a) = self.card_link_at(x, y) {
+                        return self.card_action(a) | cleared;
+                    }
+                    if self.review.as_mut().is_some_and(Session::cancel_delete) {
+                        self.refresh_threads();
+                    }
+                    if x < GUTTER && self.block_at(y).is_some() {
+                        return self.comment_here(Some(y)) | cleared;
+                    }
                 }
                 self.press(x, y) | cleared
             }
@@ -1022,7 +1055,10 @@ impl Preview {
         }
         self.hover_page = page;
         let (x, y) = if page { self.grid().point(spot, 0.5) } else { (-1.0, -1.0) };
-        let (pointer, mut rects) = self.engine.hover(x, y);
+        let (mut pointer, mut rects) = self.engine.hover(x, y);
+        if page && self.review.is_some() && self.card_link_at(x, y).is_some() {
+            pointer = Pointer::Hand;
+        }
         if self.review.is_some() {
             let b = if page { self.block_at(y) } else { None };
             rects.extend(self.engine.set_gutter(b.map(|b| (b.top, b.height))));
@@ -1054,9 +1090,8 @@ impl Preview {
             self.notify("Nothing here to comment on");
             return false;
         };
-        let quote = self.src.lines().skip(b.start.saturating_sub(1) as usize).take((b.end + 1).saturating_sub(b.start) as usize).map(str::to_string).collect();
         let label = lines_label(b.start, b.end);
-        self.app.draft = Some(Draft { on: DraftOn::Lines { start: b.start, end: b.end }, title: format!("Comment on {label}"), quote, ed: Editor::default() });
+        self.app.draft = Some(Draft::new(DraftOn::Lines { start: b.start, end: b.end }, format!("Comment on {label}"), ""));
         self.show_composer(true)
     }
 
@@ -1064,20 +1099,24 @@ impl Preview {
     /// the box is in view: all of it when `whole`, else at least the caret's end of it.
     fn show_composer(&mut self, whole: bool) -> bool {
         use crate::render::layout::Composer;
-        let c = self.app.draft.as_ref().map(|d| Composer {
-            after: match d.on {
-                DraftOn::Lines { end, .. } => Some(end),
-                DraftOn::Overall => None,
-            },
-            label: d.title.clone(),
-            text: d.ed.text.clone(),
-            cursor: d.ed.cursor,
-            placeholder: "Leave a comment".into(),
-            save: "Comment".into(),
+        let c = self.app.draft.as_ref().map(|d| {
+            let (after, in_thread, placeholder, save) = match d.on {
+                DraftOn::Lines { end, .. } => (Some(end), None, "Leave a comment", "Comment"),
+                DraftOn::Overall => (None, None, "Leave a comment", "Comment"),
+                DraftOn::Reply(id) => (None, Some(id), "Write a reply", "Reply"),
+                DraftOn::Edit(id, _) => (None, Some(id), "Leave a comment", "Update"),
+            };
+            let focus = match d.focus {
+                app::Focus::Text => 0,
+                app::Focus::Cancel => 1,
+                app::Focus::Save => 2,
+            };
+            Composer { after, label: d.title.clone(), text: d.ed.text.clone(), cursor: d.ed.cursor, placeholder: placeholder.into(), save: save.into(), in_thread, focus }
         });
         self.engine.set_composer(c);
         self.relayout();
         let Some(b) = self.layout.composer else { return false };
+        trace::log(format_args!("composer {b:?} scale {} shown {}", self.scale, self.shown_px()));
         let (top, height) = self.view_css();
         let margin = 16.0;
         let want = if b.top < top {
@@ -1100,6 +1139,7 @@ impl Preview {
     fn composer_click(&mut self, spot: Spot) -> bool {
         let Some(b) = self.layout.composer else { return false };
         let (x, y) = self.grid().point(spot, 0.5);
+        trace::log(format_args!("composer click {spot:?} at {x:.1},{y:.1} save {:?}", b.save));
         let inside = |r: [f64; 4]| x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3];
         if inside(b.save) {
             return self.act(Action::SaveDraft);
@@ -1111,15 +1151,65 @@ impl Preview {
         false
     }
 
+    /// The review card link or Reply box at page point (x, y), in CSS px.
+    fn card_link_at(&self, x: f64, y: f64) -> Option<crate::render::layout::CardAction> {
+        self.layout.card_links.iter().find(|(_, r)| x >= r[0] && x <= r[0] + r[2] && y >= r[1] && y <= r[1] + r[3]).map(|&(a, _)| a)
+    }
+
+    /// Lays the review cards out again after their state changed.
+    fn refresh_threads(&mut self) {
+        if let Some(r) = &self.review {
+            self.engine.set_threads(r.threads(), true);
+            self.relayout();
+        }
+    }
+
+    /// Carries out a click on a review card's link.
+    fn card_action(&mut self, a: crate::render::layout::CardAction) -> bool {
+        use crate::render::layout::CardAction;
+        let Some(r) = self.review.as_mut() else { return false };
+        if !matches!(a, CardAction::Delete(..)) {
+            r.cancel_delete();
+        }
+        let saved = match a {
+            CardAction::Reply(id) => {
+                self.app.draft = Some(Draft::new(DraftOn::Reply(id), "Reply".into(), ""));
+                return self.show_composer(true);
+            }
+            CardAction::Edit(id, j) => {
+                let text = r.message(id, j).unwrap_or_default();
+                self.app.draft = Some(Draft::new(DraftOn::Edit(id, j), "Edit your comment".into(), &text));
+                return self.show_composer(true);
+            }
+            CardAction::Resolve(id) => r.toggle_resolved(&self.src, id),
+            CardAction::Show(id) => {
+                r.set_shown(id, true);
+                Ok(())
+            }
+            CardAction::Hide(id) => {
+                r.set_shown(id, false);
+                Ok(())
+            }
+            CardAction::Delete(id, j) => r.delete(&self.src, id, j).map(|_| ()),
+        };
+        if let Err(e) = saved {
+            self.notify(&format!("Can't save the review: {e}"));
+        }
+        self.refresh_threads();
+        false
+    }
+
     /// Saves the comment being written and shows it on the page.
     fn save_draft(&mut self) -> bool {
         let Some(d) = self.app.draft.take() else { return false };
         let Some(r) = self.review.as_mut() else { return true };
         let body = d.ed.text.trim().to_string();
         let saved = match d.on {
-            DraftOn::Lines { .. } if body.is_empty() => Ok(()),
+            DraftOn::Lines { .. } | DraftOn::Reply(_) | DraftOn::Edit(..) if body.is_empty() => Ok(()),
             DraftOn::Lines { start, end } => r.add(&self.src, start, end, body),
             DraftOn::Overall => r.set_overall(&self.src, body),
+            DraftOn::Reply(id) => r.reply(&self.src, id, body),
+            DraftOn::Edit(id, j) => r.edit(&self.src, id, j, body),
         };
         self.engine.set_threads(r.threads(), false);
         if let Err(e) = saved {

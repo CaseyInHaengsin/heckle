@@ -35,6 +35,7 @@ Review (heckle review FILE)
   A                       write the overall comment
   Ctrl-s, Esc             in the comment editor: save, cancel
   F then a, r or c        finish: approve, request changes, or comment
+  click a card's links    Reply…, Resolve conversation, Show, Hide, Edit, Delete (click twice)
 
 Other
   + -                     zoom the page in, out (the terminal's own font zoom works too)

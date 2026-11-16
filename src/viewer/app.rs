@@ -186,8 +186,15 @@ pub enum Action {
 /// A comment being written, shown over the page.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DraftOn {
-    Lines { start: u32, end: u32 },
+    Lines {
+        start: u32,
+        end: u32,
+    },
     Overall,
+    /// A reply in conversation `id`.
+    Reply(u32),
+    /// A new text for message `j` of conversation `id`.
+    Edit(u32, usize),
 }
 
 #[derive(Clone, Debug)]
@@ -195,9 +202,24 @@ pub struct Draft {
     pub on: DraftOn,
     /// "Comment on lines 4–6", shown at the top.
     pub title: String,
-    /// The source lines it's on, shown under the title.
-    pub quote: Vec<String>,
     pub ed: Editor,
+    /// What Tab moved to: the text, or one of the box's buttons.
+    pub focus: Focus,
+}
+
+/// The part of the comment box that takes the keys. Tab steps text, Cancel, then the save button.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Focus {
+    #[default]
+    Text,
+    Cancel,
+    Save,
+}
+
+impl Draft {
+    pub fn new(on: DraftOn, title: String, text: &str) -> Self {
+        Self { on, title, ed: Editor::new(text), focus: Focus::Text }
+    }
 }
 
 #[derive(Default)]
@@ -618,13 +640,29 @@ impl App {
     /// Keys while a comment is being written: they edit it. Ctrl-S saves, Esc drops it.
     fn draft_key(&mut self, key: Key) -> Vec<Action> {
         let Some(d) = self.draft.as_mut() else { return vec![] };
-        let ed = &mut d.ed;
         match key {
             Key::Ctrl('s') => return vec![Action::SaveDraft],
             Key::Esc | Key::Ctrl('c') => {
                 self.draft = None;
                 return vec![Action::CloseDraft];
             }
+            Key::Ctrl('i') | Key::BackTab => {
+                let order = [Focus::Text, Focus::Cancel, Focus::Save];
+                let i = order.iter().position(|&f| f == d.focus).unwrap_or(0);
+                d.focus = order[if key == Key::BackTab { (i + 2) % 3 } else { (i + 1) % 3 }];
+                return vec![Action::Draft];
+            }
+            Key::Enter | Key::Char(' ') if d.focus == Focus::Save => return vec![Action::SaveDraft],
+            Key::Enter | Key::Char(' ') if d.focus == Focus::Cancel => {
+                self.draft = None;
+                return vec![Action::CloseDraft];
+            }
+            _ => {}
+        }
+        // Any other key edits the text, which takes the focus back.
+        d.focus = Focus::Text;
+        let ed = &mut d.ed;
+        match key {
             Key::Enter => ed.insert("\n"),
             Key::Backspace => ed.backspace(),
             Key::Left => ed.left(),
@@ -635,7 +673,6 @@ impl App {
             Key::End | Key::Ctrl('e') => ed.end(),
             Key::Ctrl('w') => ed.delete_word_back(),
             Key::Ctrl('u') => ed.delete_to_line_start(),
-            Key::Ctrl('i') => ed.insert("    "),
             Key::Char(c) if !c.is_control() => ed.insert(c.encode_utf8(&mut [0; 4])),
             _ => return vec![],
         }
@@ -1493,7 +1530,7 @@ mod tests {
     }
 
     fn draft() -> Draft {
-        Draft { on: DraftOn::Lines { start: 1, end: 2 }, title: String::new(), quote: vec![], ed: Editor::default() }
+        Draft::new(DraftOn::Lines { start: 1, end: 2 }, String::new(), "")
     }
 
     #[test]
@@ -1527,6 +1564,26 @@ mod tests {
         assert!(a.draft.is_none());
         a.draft = Some(draft());
         assert_eq!(a.handle(Key::Ctrl('c')), vec![Action::CloseDraft]);
+    }
+
+    #[test]
+    fn r05_tab_reaches_the_buttons() {
+        let mut a = App { review: true, draft: Some(draft()), ..app(100, 20) };
+        let focus = |a: &App| a.draft.as_ref().map(|d| d.focus);
+        a.handle(Key::Char('x'));
+        a.handle(Key::Ctrl('i'));
+        assert_eq!(focus(&a), Some(Focus::Cancel));
+        a.handle(Key::Ctrl('i'));
+        assert_eq!(focus(&a), Some(Focus::Save));
+        assert_eq!(a.handle(Key::Enter), vec![Action::SaveDraft]);
+        a.handle(Key::BackTab);
+        assert_eq!(focus(&a), Some(Focus::Cancel));
+        // Typing takes the focus back to the text, and Tab inserts nothing.
+        a.handle(Key::Char('y'));
+        assert_eq!((focus(&a), a.draft.as_ref().map(|d| d.ed.text.as_str())), (Some(Focus::Text), Some("xy")));
+        a.handle(Key::Ctrl('i'));
+        assert_eq!(a.handle(Key::Char(' ')), vec![Action::CloseDraft]);
+        assert!(a.draft.is_none());
     }
 
     #[test]

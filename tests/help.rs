@@ -1263,3 +1263,33 @@ fn review_mode_saves_a_comment_and_closes_the_review() {
     assert_eq!(quit, Some(true));
     assert!(closed.starts_with("# Review: closed without finishing"), "{closed}");
 }
+
+#[test]
+fn claudes_reply_shows_in_the_open_review() {
+    let dir = scratch("reply");
+    let file = dir.join("plan.md");
+    std::fs::write(&file, "# Plan\n\nStep one.\n").unwrap();
+    let review = dir.join("out/review.md");
+    let state = dir.join("state");
+    let env = [("XDG_STATE_HOME", state.to_str().unwrap())];
+    let args = ["review", "--out", review.to_str().unwrap(), file.to_str().unwrap()];
+    let Viewer { mut child, mut tty, out } = start(&args, None, 80, &env, false);
+    wait_for(&out, 0, b"a=p,");
+    tty.write_all(b"a").unwrap();
+    wait_for(&out, 0, b"Ctrl-S");
+    tty.write_all(b"Why?\x13").unwrap();
+    let end = Instant::now() + LIMIT;
+    while !std::fs::read_to_string(&review).unwrap_or_default().contains("Why?") && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let from = out.lock().unwrap().len();
+    let replied = Command::new(env!("CARGO_BIN_EXE_heckle")).args(["reply", "--to", "1", "Because."]).envs(env).output().unwrap();
+    assert!(replied.status.success(), "{}", String::from_utf8_lossy(&replied.stderr));
+    wait_for(&out, from, b"Claude replied");
+    tty.write_all(b"q").unwrap();
+    let _ = exits_within(&mut child, LIMIT);
+    let _ = child.kill();
+    let saved = std::fs::read_to_string(&review).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(saved.contains("Claude replied:\n> Because."), "{saved}");
+}

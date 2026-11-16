@@ -190,6 +190,8 @@ pub struct Page {
     pub threads: Vec<ThreadBox>,
     /// The review comment box, in device px.
     pub composer: Option<ComposerBox>,
+    /// The review cards' links and Reply boxes, `(x, y, w, h)` in device px.
+    pub card_links: Vec<(crate::render::layout::CardAction, (f32, f32, f32, f32))>,
 }
 
 /// The review comment box and its buttons, `(x, y, w, h)`.

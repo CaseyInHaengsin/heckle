@@ -26,7 +26,7 @@ pub struct Opts {
 }
 
 mod cards;
-pub use cards::{Composer, ThreadMsg};
+pub use cards::{CardAction, Composer, ThreadMsg};
 
 /// A review conversation to draw as a card. It sits under the block that holds source line
 /// `after`, or at the end of the page when `after` is None or past every block.
@@ -38,6 +38,10 @@ pub struct Thread {
     pub head: String,
     pub outdated: bool,
     pub resolved: bool,
+    /// Shown as its header only.
+    pub folded: bool,
+    /// Offers Resolve conversation (the overall review has none).
+    pub resolvable: bool,
     pub msgs: Vec<ThreadMsg>,
 }
 
@@ -199,16 +203,16 @@ pub fn layout(fonts: &mut Fonts, th: &Theme, o: &Opts, doc: &Doc, images: &mut I
             l.page.blocks.push(SrcBlock { start: *a, end: *e, top, h: y - top, tx: (tx, l.page.text.len()) });
         }
         for t in o.threads.iter().filter(|t| home(t.after) == Some(i)) {
-            l.thread(t, mx, w, &mut y);
+            l.thread(t, o.composer.as_ref().filter(|c| c.in_thread == Some(t.id)), mx, w, &mut y);
         }
-        if let Some(c) = o.composer.as_ref().filter(|c| home(c.after) == Some(i)) {
+        if let Some(c) = o.composer.as_ref().filter(|c| c.in_thread.is_none() && home(c.after) == Some(i)) {
             l.composer(c, mx, w, &mut y);
         }
     }
     for t in o.threads.iter().filter(|t| home(t.after).is_none()) {
-        l.thread(t, mx, w, &mut y);
+        l.thread(t, o.composer.as_ref().filter(|c| c.in_thread == Some(t.id)), mx, w, &mut y);
     }
-    if let Some(c) = o.composer.as_ref().filter(|c| home(c.after).is_none()) {
+    if let Some(c) = o.composer.as_ref().filter(|c| c.in_thread.is_none() && home(c.after).is_none()) {
         l.composer(c, mx, w, &mut y);
     }
     l.page.h = y + th.page_bottom * s;
